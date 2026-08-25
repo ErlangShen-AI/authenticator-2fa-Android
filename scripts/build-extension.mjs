@@ -41,6 +41,15 @@ function createManifest(target) {
       service_worker: 'assets/background.js',
       type: 'module',
     },
+    commands: {
+      _execute_action: {
+        suggested_key: {
+          default: 'Alt+Shift+P',
+          mac: 'Alt+Shift+P',
+        },
+        description: '__MSG_commandOpenPopup__',
+      },
+    },
     permissions: ['storage', 'activeTab', 'scripting'],
     content_security_policy: {
       extension_pages:

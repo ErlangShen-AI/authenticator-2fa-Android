@@ -10,5 +10,8 @@
   },
   "actionTitle": {
     "message": "প্রমাণীকরণকারী - 2FA খুলুন"
+  },
+  "commandOpenPopup": {
+    "message": "পপআপ খুলুন"
   }
 }

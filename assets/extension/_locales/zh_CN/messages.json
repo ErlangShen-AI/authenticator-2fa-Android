@@ -10,5 +10,8 @@
   },
   "actionTitle": {
     "message": "打开身份验证器 - 2FA"
+  },
+  "commandOpenPopup": {
+    "message": "打开弹出窗口"
   }
 }

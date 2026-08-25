@@ -10,5 +10,8 @@
   },
   "actionTitle": {
     "message": "Open Authenticator - 2FA"
+  },
+  "commandOpenPopup": {
+    "message": "Open popup"
   }
 }
