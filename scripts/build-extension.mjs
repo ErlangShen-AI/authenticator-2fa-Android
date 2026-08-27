@@ -44,8 +44,8 @@ function createManifest(target) {
     commands: {
       _execute_action: {
         suggested_key: {
-          default: 'Alt+Shift+P',
-          mac: 'Alt+Shift+P',
+          default: 'Ctrl+Shift+2',
+          mac: 'Command+Shift+2',
         },
         description: '__MSG_commandOpenPopup__',
       },
