@@ -145,6 +145,44 @@ describe('decodeQrImageData', () => {
     ).resolves.toBe(rightPayload);
   });
 
+  test('keeps the focused QR when more than eight codes are visible', async () => {
+    const payloads = Array.from(
+      { length: 12 },
+      (_, index) =>
+        `otpauth://totp/u${String(index).padStart(2, '0')}?secret=JBSWY3DPEHPK3PXP`
+    );
+    const qrs = await Promise.all(
+      payloads.map((payload) =>
+        toBuffer(payload, { errorCorrectionLevel: 'L', margin: 1, scale: 2, type: 'png' })
+      )
+    );
+    const qrSide = (await sharp(qrs[0]).metadata()).width ?? 0;
+    const columns = 4;
+    const gap = 14;
+    const focusedIndex = 9;
+    const focus = { x: 256, y: 256 };
+    const step = qrSide + gap;
+    const originLeft = focus.x - qrSide / 2 - (focusedIndex % columns) * step;
+    const originTop = focus.y - qrSide / 2 - Math.floor(focusedIndex / columns) * step;
+    const { data, info } = await sharp({
+      create: { width: 512, height: 512, channels: 4, background: '#fff' }
+    })
+      .composite(
+        qrs.map((input, index) => ({
+          input,
+          left: originLeft + (index % columns) * step,
+          top: originTop + Math.floor(index / columns) * step
+        }))
+      )
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    await expect(
+      decodeQrImageData({ data, width: info.width, height: info.height }, focus)
+    ).resolves.toBe(payloads[focusedIndex]);
+  });
+
   test('imports non-block-aligned Base32 secrets with or without padding', async () => {
     const unpaddedSecret = 'J3WWIV3PTGJPQV5QAICM';
 

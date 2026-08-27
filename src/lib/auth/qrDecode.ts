@@ -17,7 +17,8 @@ const READER_OPTIONS = {
 
 const FOCUSED_READER_OPTIONS = {
   ...READER_OPTIONS,
-  maxNumberOfSymbols: 8
+  // ZXing uses zero for no limit; proximity selection needs every candidate.
+  maxNumberOfSymbols: 0
 } satisfies ReaderOptions;
 
 export interface QrDecodeFocus {
