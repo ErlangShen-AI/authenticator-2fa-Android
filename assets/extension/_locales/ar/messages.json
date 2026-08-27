@@ -10,5 +10,8 @@
   },
   "actionTitle": {
     "message": "فتح المصادِق - 2FA"
+  },
+  "commandOpenPopup": {
+    "message": "فتح النافذة المنبثقة"
   }
 }

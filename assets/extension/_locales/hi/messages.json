@@ -10,5 +10,8 @@
   },
   "actionTitle": {
     "message": "प्रमाणक - 2FA खोलें"
+  },
+  "commandOpenPopup": {
+    "message": "पॉपअप खोलें"
   }
 }
