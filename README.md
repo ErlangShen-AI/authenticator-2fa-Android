@@ -26,7 +26,7 @@ Browser extension for generating and managing two-factor authentication codes.
 
 ## Browser Sync
 
-Open **Settings → Browser Sync**, set a local vault password, and save the generated recovery key. On another supported device, sign into the same browser account and enter that key in Browser Sync. Enable extension syncing in your browser settings.
+Open **Settings → Browser Sync**, set a local vault password, choose **Set up sync**, and save the generated recovery key. On another supported device, sign into the same browser account, choose **Connect to existing sync**, and enter that key. Enable extension syncing in your browser settings.
 
 Sync works within one browser provider. Accounts, edits, and deletions sync while the extension is open and unlocked; preferences and ordering stay local. Keep independent backups and use HOTP accounts on one device at a time.
 

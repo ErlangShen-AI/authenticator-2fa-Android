@@ -16,6 +16,7 @@
   import Toast from './Toast.svelte';
   import ViewHeader from './ViewHeader.svelte';
   import { FADE_TRANSITION, panelReveal, viewTransition } from './transitions';
+  import { getSyncStatusKey, getSyncStatusTone, SYNC_STATUS_DOT } from './syncStatus';
   import { authenticatorVault as vault } from '../../state/authenticator.svelte';
   import { LANGUAGES, tr } from '../../i18n/messages';
   import type { AppSettings, ThemePreference } from '../../auth/types';
@@ -325,14 +326,17 @@
         type="button"
         onclick={() => (showSync = true)}
       >
-        <span class="flex min-w-0 items-center gap-2 text-start">
+        <span class="flex min-w-0 items-center gap-2.5 text-start">
           <Cloud class="shrink-0" size={16} aria-hidden="true" />
           <span class="min-w-0 whitespace-normal">
             <span class="block text-sm">{tr('browserSync')}</span>
             {#if vault.syncEnabled || vault.syncError}
-              <span class={['block text-xs font-normal', vault.syncStatus === 'pending' || vault.syncStatus === 'error' ? 'text-warning' : 'text-base-content/60']} role="status">
-                {vault.syncStatus === 'syncing' ? tr('syncSyncing') : vault.syncStatus === 'pending' ? tr('syncPending') : vault.syncStatus === 'error' ? tr('syncErrorStatus') : tr('syncReady')}
+              <span class="flex items-center gap-1.5 text-xs font-normal text-base-content/60" role="status">
+                <span class={['size-2 shrink-0 rounded-full', SYNC_STATUS_DOT[getSyncStatusTone(vault.syncStatus)]]} aria-hidden="true"></span>
+                {tr(getSyncStatusKey(vault.syncStatus))}
               </span>
+            {:else}
+              <span class="block text-xs font-normal text-base-content/60">{tr('syncDescription')}</span>
             {/if}
           </span>
         </span>
