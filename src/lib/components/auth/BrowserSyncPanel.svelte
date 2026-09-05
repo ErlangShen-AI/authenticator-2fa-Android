@@ -304,7 +304,7 @@
     <label class="block space-y-1.5">
       <span class="text-sm font-medium">{tr('syncRecoveryKey')}</span>
       <textarea
-        class="textarea w-full resize-none font-mono text-sm leading-relaxed tracking-wide"
+        class="auth-recovery-key textarea w-full resize-none font-mono tracking-wide"
         rows="3"
         bind:this={keyInput}
         bind:value={recoveryKey}
@@ -477,7 +477,19 @@
 
 {#snippet keyDisplay(key: string)}
   <div class="space-y-2.5 rounded-box border border-base-300 bg-base-200/40 p-3">
-    <code class="block font-mono text-sm leading-relaxed tracking-wide wrap-anywhere select-all" dir="ltr">{key}</code>
+    <!-- A read-only field keeps the key reachable by Tab and selectable with the
+         keyboard when clipboard access is unavailable. -->
+    <textarea
+      class="auth-recovery-key block w-full resize-none rounded-field border-0 bg-transparent p-0 font-mono tracking-wide wrap-anywhere field-sizing-content"
+      rows="2"
+      readonly
+      value={key}
+      dir="ltr"
+      spellcheck="false"
+      aria-label={tr('syncRecoveryKey')}
+      onfocus={(event) => event.currentTarget.select()}
+      onclick={(event) => event.currentTarget.select()}
+    ></textarea>
     <button class="btn btn-block btn-sm" type="button" onclick={() => copyKey(key)}>
       {#if copied}
         <Check class="text-success" size={15} aria-hidden="true" />
