@@ -207,6 +207,19 @@ select:not(:disabled),
   outline-offset: 2px;
 }
 
+/* Form controls above reset `font`, which outranks layered utilities, so the
+   recovery key fields set their monospace type here. */
+.auth-recovery-key {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace);
+  font-size: 0.875rem;
+  line-height: 1.625;
+}
+
+.auth-recovery-key:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--color-primary) 78%, transparent);
+  outline-offset: 2px;
+}
+
 .btn:not(:disabled):active {
   transform: scale(0.97);
   transition-duration: 100ms;

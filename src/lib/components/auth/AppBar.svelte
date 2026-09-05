@@ -42,12 +42,15 @@
     <span class="text-xs">{tr('sourceCode')}</span>
   </a>
   <button
-    class="btn btn-ghost btn-sm btn-circle"
+    class="btn btn-ghost btn-sm btn-circle relative"
     type="button"
-    aria-label={tr('settings')}
-    title={tr('settings')}
+    aria-label={vault.syncEnabled && vault.syncError ? `${tr('settings')}: ${tr('syncErrorStatus')}` : tr('settings')}
+    title={vault.syncEnabled && vault.syncError ? tr('syncErrorStatus') : tr('settings')}
     onclick={onsettings}
   >
     <Settings size={18} aria-hidden="true" />
+    {#if vault.syncEnabled && vault.syncError}
+      <span class="absolute end-1 top-1 size-2 rounded-full bg-warning" aria-hidden="true"></span>
+    {/if}
   </button>
 </header>

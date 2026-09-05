@@ -2,7 +2,7 @@
 
 Browser extension for generating and managing two-factor authentication codes.
 
-**Privacy:** Authenticator - 2FA strictly does not track users, collect analytics, or collect user data. Account secrets and codes stay stored locally on the user's device and are not sent to a remote service.
+**Privacy:** Authenticator - 2FA does not track users or collect analytics. Accounts stay on your device by default. If you enable Browser Sync, encrypted account data is sent through your browser provider's sync service. Account names and secrets are encrypted before upload; the recovery key stays inside your password-protected local vault.
 
 ![Authenticator - 2FA promo](assets/store/promotional/marquee-promo-tile.png)
 
@@ -19,9 +19,18 @@ Browser extension for generating and managing two-factor authentication codes.
 - Search, copy, manually reorder accounts, or focus on likely codes for the current site with one-click access to the rest.
 - Import by dropping or picking QR images, otpauth text, JSON, or password-protected backups; export the same way.
 - Optional local vault password protection.
+- Optional encrypted Browser Sync across supported devices using the same browser account.
 - Local-first storage with no account service.
 
 **Important: Users are responsible for maintaining their own backups of 2FA codes and recovery methods. We are not responsible for lost, deleted, inaccessible, or unrecoverable 2FA codes.**
+
+## Browser Sync
+
+Open **Settings → Browser Sync**, set a local vault password, choose **Set up sync**, and save the generated recovery key. On another supported device, sign into the same browser account, choose **Connect to existing sync**, and enter that key. Enable extension syncing in your browser settings.
+
+Sync works within one browser provider. Accounts, edits, and deletions sync while the extension is open and unlocked; preferences and ordering stay local. Keep independent backups and use HOTP accounts on one device at a time.
+
+See [sync security, recovery, and limits](docs/browser-sync.md).
 
 ## Development
 

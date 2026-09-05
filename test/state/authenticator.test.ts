@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { loadStoredVault, saveStoredVault } from '../../src/lib/auth/storage';
+import { loadStoredVault, loadVaultSessionKey, saveStoredVault } from '../../src/lib/auth/storage';
 import {
   DEFAULT_SETTINGS,
   type AppSettings,
@@ -11,6 +11,7 @@ import {
   isPlainVaultRecord
 } from '../../src/lib/auth/vaultRecords';
 import { AuthenticatorVault } from '../../src/lib/state/authenticator.svelte';
+import * as vaultCrypto from '../../src/lib/auth/vaultCrypto';
 import { installMemoryStorage, installStructuredCloneChromeStorage } from '../helpers/storage';
 
 const OTPAUTH_URI = otpAuthUri('alice@example.com');
@@ -512,16 +513,85 @@ describe('AuthenticatorVault persistence and locking', () => {
     expect(vault.codes).toEqual({});
   });
 
-  test('manual lock clears the session unlock and requires the password again', async () => {
+  test('refreshing an unlocked encrypted vault preserves the interface while decryption is pending', async () => {
+    const first = new AuthenticatorVault();
+    await first.initialize();
+    await first.importText(OTPAUTH_URI);
+    await first.changePassword('', PASSWORD);
+    const second = new AuthenticatorVault();
+    await second.initialize();
+    await second.updateSettings({ theme: 'dark' });
+
+    const decrypt = vaultCrypto.unlockVaultEnvelopeWithKey;
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const spy = vi.spyOn(vaultCrypto, 'unlockVaultEnvelopeWithKey').mockImplementation(async (...args) => {
+      entered.resolve();
+      await release.promise;
+      return decrypt(...args);
+    });
+    const accounts = first.accounts;
+    const refresh = first.syncNow();
+    await entered.promise;
+    const duringRefresh = { locked: first.locked, accounts: first.accounts, theme: first.settings.theme };
+    release.resolve();
+    await refresh;
+    spy.mockRestore();
+
+    expect(duringRefresh.locked).toBe(false);
+    expect(duringRefresh.accounts).toBe(accounts);
+    expect(duringRefresh.theme).toBe('system');
+    expect(first.settings.theme).toBe('dark');
+    expect(first.locked).toBe(false);
+  });
+
+  test('a failed encrypted refresh locks the vault and clears the previous unlocked data', async () => {
     const vault = new AuthenticatorVault();
     await vault.initialize();
     await vault.importText(OTPAUTH_URI);
     await vault.changePassword('', PASSWORD);
+    const stored = await loadStoredVault();
+    if (!isEncryptedVaultRecord(stored)) throw new Error('Expected an encrypted vault.');
+    await saveStoredVault({ ...stored, cipher: { ...stored.cipher, data: 'AAAA' } });
 
-    await vault.lock();
+    await vault.syncNow();
 
     expect(vault.locked).toBe(true);
-    expect(vault.accounts).toHaveLength(0);
+    expect(vault.accounts).toEqual([]);
+    expect(vault.codes).toEqual({});
+    expect(await loadVaultSessionKey(vaultCrypto.getVaultKeyFingerprint(stored))).toBeNull();
+  });
+
+  test('manual lock clears secrets across mounted pages without resetting their display preferences', async () => {
+    installStructuredCloneChromeStorage();
+    const vault = new AuthenticatorVault();
+    await vault.initialize();
+    await vault.importText(OTPAUTH_URI);
+    await vault.updateSettings({ language: 'fr', theme: 'dark' });
+    await vault.changePassword('', PASSWORD);
+    const other = new AuthenticatorVault();
+    await other.initialize();
+    const reload = vi.spyOn(vault, 'initialize');
+    const reloadOther = vi.spyOn(other, 'initialize');
+    const stopWatching = vault.watchStorage();
+    const stopWatchingOther = other.watchStorage();
+
+    try {
+      await vault.lock();
+      expect(reload).toHaveBeenCalledOnce();
+      expect(reloadOther).toHaveBeenCalledOnce();
+      await Promise.all([reload.mock.results[0].value, reloadOther.mock.results[0].value]);
+
+      for (const page of [vault, other]) {
+        expect(page.locked).toBe(true);
+        expect(page.accounts).toHaveLength(0);
+        expect(page.codes).toEqual({});
+        expect(page.settings).toMatchObject({ language: 'fr', theme: 'dark' });
+      }
+    } finally {
+      stopWatching();
+      stopWatchingOther();
+    }
 
     const reopened = new AuthenticatorVault();
     await reopened.initialize();
@@ -529,12 +599,14 @@ describe('AuthenticatorVault persistence and locking', () => {
     expect(reopened.locked).toBe(true);
     expect(reopened.passwordProtected).toBe(true);
     expect(reopened.accounts).toHaveLength(0);
+    expect(reopened.settings).toMatchObject({ language: 'en', theme: 'system' });
 
     await reopened.unlock(PASSWORD);
 
     expect(reopened.error).toBe('');
     expect(reopened.locked).toBe(false);
     expect(reopened.accounts).toHaveLength(1);
+    expect(reopened.settings).toMatchObject({ language: 'fr', theme: 'dark' });
   });
 
   test('changing password while locked preserves encrypted vault data', async () => {
@@ -589,6 +661,35 @@ describe('AuthenticatorVault persistence and locking', () => {
     expect(vault.passwordProtected).toBe(false);
     expect(vault.locked).toBe(false);
     expect(vault.accounts).toHaveLength(1);
+    expect(isPlainVaultRecord(await loadStoredVault())).toBe(true);
+  });
+
+  test.each(['extension', 'fallback'])('reset clears live data when %s session cleanup fails', async (storage) => {
+    const { sessionStorage } = installMemoryStorage();
+    if (storage === 'extension') installStructuredCloneChromeStorage();
+    const vault = new AuthenticatorVault();
+    await vault.initialize();
+    await vault.importText(OTPAUTH_URI);
+    await vault.updateSettings({ language: 'fr', theme: 'dark' });
+    await vault.changePassword('', PASSWORD);
+    const failCleanup = () => {
+      throw new Error('session clear failed');
+    };
+    if (storage === 'extension') vi.spyOn(chrome.storage.session, 'remove').mockImplementation(failCleanup);
+    else sessionStorage.removeItem = failCleanup;
+
+    await vault.resetVault();
+
+    expect(vault.error).toBe('session clear failed');
+    expect(await loadStoredVault()).toBeNull();
+    expect(vault.hasVault).toBe(false);
+    expect(vault.passwordProtected).toBe(false);
+    expect(vault.accounts).toEqual([]);
+    expect(vault.codes).toEqual({});
+    expect(vault.settings).toEqual(DEFAULT_SETTINGS);
+
+    await vault.importText(BOB_URI);
+    expect(vault.accounts.map((account) => account.label)).toEqual(['bob@example.com']);
     expect(isPlainVaultRecord(await loadStoredVault())).toBe(true);
   });
 

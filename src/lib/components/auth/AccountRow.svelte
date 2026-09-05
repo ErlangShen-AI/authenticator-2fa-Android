@@ -3,6 +3,7 @@
   import CountdownRing from './CountdownRing.svelte';
   import { authenticatorVault as vault } from '../../state/authenticator.svelte';
   import { tr } from '../../i18n/messages';
+  import { AccountChangedError, getErrorMessage } from '../../auth/errors';
   import type { AuthenticatorAccount, OtpCode } from '../../auth/types';
 
   interface Props {
@@ -55,6 +56,15 @@
   async function copyFromContextMenu(event: MouseEvent) {
     event.preventDefault();
     await copy();
+  }
+
+  async function advanceHotp() {
+    try {
+      await vault.advanceHotp(account);
+    } catch (error) {
+      vault.error = error instanceof AccountChangedError
+        ? tr('accountChanged') : getErrorMessage(error, tr('accountChanged'));
+    }
   }
 
   function groupDigits(raw: string): string {
@@ -159,7 +169,7 @@
         type="button"
         aria-label={`${tr('next')}: ${title}`}
         title={tr('next')}
-        onclick={() => vault.advanceHotp(account.id)}
+        onclick={advanceHotp}
       >
         <RefreshCw size={16} aria-hidden="true" />
       </button>

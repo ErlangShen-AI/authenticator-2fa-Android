@@ -1,9 +1,18 @@
 import { beforeEach, describe, expect, test } from 'vitest';
-import { loadStoredVault } from '../../src/lib/auth/storage';
+import { loadStoredVault, saveStoredVault, saveVaultSessionKey } from '../../src/lib/auth/storage';
+import { generateSyncRecoveryKey } from '../../src/lib/auth/browserSync';
+import { createAccount } from '../../src/lib/auth/otp';
+import { createDefaultAppSettings } from '../../src/lib/auth/types';
+import {
+  createVaultEnvelope,
+  exportVaultKey,
+  getVaultKeyFingerprint,
+  unlockVaultEnvelope
+} from '../../src/lib/auth/vaultCrypto';
 import { importTextIntoStoredVault } from '../../src/lib/auth/vaultImport';
-import { isPlainVaultRecord } from '../../src/lib/auth/vaultRecords';
+import { isEncryptedVaultRecord, isPlainVaultRecord } from '../../src/lib/auth/vaultRecords';
 import { AuthenticatorVault } from '../../src/lib/state/authenticator.svelte';
-import { installMemoryStorage } from '../helpers/storage';
+import { installMemoryStorage, installStructuredCloneChromeStorage } from '../helpers/storage';
 
 const ALICE_URI = otpAuthUri('alice@example.com');
 const BOB_URI = otpAuthUri('bob@example.com');
@@ -36,6 +45,25 @@ describe('importTextIntoStoredVault', () => {
     expect(stored.data.settings.accountSortMode).toBe('contextual');
   });
 
+  test('preserves both accounts when background imports overlap', async () => {
+    installStructuredCloneChromeStorage({ localWriteDelayMs: 10 });
+
+    const results = await Promise.all([
+      importTextIntoStoredVault(ALICE_URI),
+      importTextIntoStoredVault(BOB_URI)
+    ]);
+
+    expect(results.map((result) => result.imported)).toEqual([1, 1]);
+    const stored = await loadStoredVault();
+    if (!isPlainVaultRecord(stored)) {
+      throw new Error('Expected a plain vault record.');
+    }
+    expect(stored.data.accounts.map((account) => account.label)).toEqual([
+      'alice@example.com',
+      'bob@example.com'
+    ]);
+  });
+
   test('preserves a manual sorting preference when importing into a plain vault', async () => {
     const vault = new AuthenticatorVault();
     await vault.initialize();
@@ -63,10 +91,11 @@ describe('importTextIntoStoredVault', () => {
     expect(await loadStoredVault()).toBeNull();
   });
 
-  test('reports duplicates without rewriting account order', async () => {
-    await importTextIntoStoredVault(ALICE_URI);
+  test('reports duplicates without resetting an HOTP counter or account order', async () => {
+    const hotpUri = ALICE_URI.replace('/totp/', '/hotp/');
+    await importTextIntoStoredVault(`${hotpUri}&counter=100`);
 
-    const duplicate = await importTextIntoStoredVault(ALICE_URI);
+    const duplicate = await importTextIntoStoredVault(`${hotpUri}&counter=1`);
 
     expect(duplicate.imported).toBe(0);
     expect(duplicate.skipped).toBe(1);
@@ -77,19 +106,27 @@ describe('importTextIntoStoredVault', () => {
     }
     expect(stored.data.accounts).toHaveLength(1);
     expect(stored.data.accounts[0].sortOrder).toBe(0);
+    expect(stored.data.accounts[0].counter).toBe(100);
   });
 
-  test('skips duplicate accounts within the same import batch', async () => {
-    const result = await importTextIntoStoredVault([ALICE_URI, ALICE_URI].join('\n'));
+  test('preserves different OTP parameters while skipping exact duplicates', async () => {
+    await importTextIntoStoredVault(ALICE_URI);
+    const variants = ['algorithm=SHA256', 'digits=8', 'period=60'].map((query) => `${ALICE_URI}&${query}`);
+    const result = await importTextIntoStoredVault([ALICE_URI, ...variants, variants[0]].join('\n'));
 
-    expect(result.imported).toBe(1);
-    expect(result.skipped).toBe(1);
+    expect(result.imported).toBe(3);
+    expect(result.skipped).toBe(2);
 
     const stored = await loadStoredVault();
     if (!isPlainVaultRecord(stored)) {
       throw new Error('Expected a plain vault record.');
     }
-    expect(stored.data.accounts).toHaveLength(1);
+    expect(stored.data.accounts.map(({ algorithm, digits, period }) => [algorithm, digits, period])).toEqual([
+      ['SHA-1', 6, 30],
+      ['SHA-256', 6, 30],
+      ['SHA-1', 8, 30],
+      ['SHA-1', 6, 60]
+    ]);
   });
 
   test('regenerates imported account IDs that collide with existing accounts', async () => {
@@ -145,6 +182,75 @@ describe('importTextIntoStoredVault', () => {
       'alice@example.com',
       'bob@example.com'
     ]);
+  });
+
+  test('preserves encrypted Browser Sync credentials and revisions during a background import', async () => {
+    installStructuredCloneChromeStorage();
+    const account = createAccount({
+      issuer: 'Example',
+      label: 'alice@example.com',
+      secret: 'JBSWY3DPEHPK3PXP'
+    });
+    const deviceId = crypto.randomUUID();
+    const browserSync = {
+      recoveryKey: generateSyncRecoveryKey(),
+      deviceId,
+      records: {
+        [account.id]: { id: account.id, deviceId, revision: 3, account }
+      }
+    };
+    const { envelope, key } = await createVaultEnvelope({
+      accounts: [account],
+      settings: createDefaultAppSettings(),
+      browserSync
+    }, PASSWORD);
+    await saveStoredVault(envelope);
+    await saveVaultSessionKey(getVaultKeyFingerprint(envelope), await exportVaultKey(key));
+
+    const result = await importTextIntoStoredVault(BOB_URI);
+
+    expect(result.imported).toBe(1);
+    const stored = await loadStoredVault();
+    if (!isEncryptedVaultRecord(stored)) {
+      throw new Error('Expected an encrypted vault record.');
+    }
+    expect(JSON.stringify(stored)).not.toContain(browserSync.recoveryKey);
+    const { data } = await unlockVaultEnvelope(stored, PASSWORD);
+    expect(data.browserSync).toMatchObject({ recoveryKey: browserSync.recoveryKey, deviceId });
+    expect(data.browserSync?.records[account.id]).toMatchObject({ revision: 3, deviceId });
+    expect(data.accounts.map((item) => item.label)).toEqual([
+      'alice@example.com',
+      'bob@example.com'
+    ]);
+  });
+
+  test('a background JSON import of a deleted synced account gets a fresh ID', async () => {
+    installStructuredCloneChromeStorage();
+    const account = createAccount({ label: 'Alice', secret: 'JBSWY3DPEHPK3PXP' });
+    const deviceId = crypto.randomUUID();
+    const browserSync = {
+      recoveryKey: generateSyncRecoveryKey(),
+      deviceId,
+      records: { [account.id]: { id: account.id, deviceId, revision: 3, account: null } }
+    };
+    const { envelope, key } = await createVaultEnvelope({
+      accounts: [],
+      settings: createDefaultAppSettings(),
+      browserSync
+    }, PASSWORD);
+    await saveStoredVault(envelope);
+    await saveVaultSessionKey(getVaultKeyFingerprint(envelope), await exportVaultKey(key));
+
+    const result = await importTextIntoStoredVault(JSON.stringify({ accounts: [account] }));
+
+    expect(result.imported).toBe(1);
+    const stored = await loadStoredVault();
+    if (!isEncryptedVaultRecord(stored)) throw new Error('Expected an encrypted vault record.');
+    const { data } = await unlockVaultEnvelope(stored, PASSWORD);
+    expect(data.accounts[0].id).not.toBe(account.id);
+    expect(data.accounts[0].label).toBe('Alice');
+    expect(data.browserSync).toMatchObject(browserSync);
+    expect(data.browserSync?.records[data.accounts[0].id].restorationId).toBe(data.accounts[0].id);
   });
 
   test('rejects encrypted imports after the vault is manually locked', async () => {

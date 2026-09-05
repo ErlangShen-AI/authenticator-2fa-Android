@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { prefersReducedMotion } from 'svelte/motion';
   import { fade } from 'svelte/transition';
   import {
@@ -32,11 +32,12 @@
   } from './lib/components/auth/transitions';
   import {
     getAutoScrollVelocity as calculateAutoScrollVelocity,
+    isReorderCurrent,
     moveItem,
     rubberbandOffset
   } from './lib/components/auth/reorder';
   import { getImportFailureMessage } from './lib/components/auth/importFeedback';
-  import { getErrorMessage } from './lib/auth/errors';
+  import { AccountChangedError, getErrorMessage } from './lib/auth/errors';
   import { accountToOtpAuthUri } from './lib/auth/otpauth';
   import {
     getAccountListView,
@@ -102,6 +103,7 @@
   let dragState = $state.raw<AccountDragState | null>(null);
   let reorderSaving = $state(false);
   let keyboardDraggingAccountId = $state<string | null>(null);
+  let reorderSourceIds: string[] | null = null;
   let accountListElement = $state<HTMLUListElement | null>(null);
   let scrollContainerElement = $state<HTMLDivElement | null>(null);
   let activeDragHandle: HTMLElement | null = null;
@@ -163,6 +165,7 @@
   }
 
   onMount(() => {
+    const stopWatchingStorage = vault.watchStorage();
     void initializeApp();
     const timer = window.setInterval(() => void vault.refreshCodes(), 1000);
 
@@ -183,6 +186,7 @@
 
     return () => {
       window.clearInterval(timer);
+      stopWatchingStorage();
       if (hasRuntimeMessaging()) {
         chrome.runtime.onMessage.removeListener(listener);
       }
@@ -190,6 +194,34 @@
   });
   onDestroy(() => {
     cleanupAccountDrag();
+  });
+
+  $effect.pre(() => {
+    if (vault.locked || !vault.hasVault) {
+      untrack(() => {
+        if (!vault.hasVault) view = 'codes';
+        cleanupAccountDrag();
+        editing = null;
+        deleting = null;
+        actionsFor = null;
+        showAdd = false;
+        addImportText = '';
+        query = '';
+        allCodesRevealed = false;
+        clearAddFeedback();
+        closeQr();
+      });
+    }
+  });
+
+  $effect.pre(() => {
+    const accounts = vault.sortedAccounts;
+    const disabled = reorderDisabled;
+    untrack(() => {
+      if (reorderSourceIds && (disabled || !isReorderCurrent(accounts, reorderSourceIds))) {
+        cleanupAccountDrag();
+      }
+    });
   });
 
   // Keep the browser popup frame on the same theme as the app surface.
@@ -337,7 +369,7 @@
       return;
     }
     await runForm(async () => {
-      await vault.updateAccount(account.id, draft);
+      await vault.updateAccount(account, draft);
       editing = null;
     });
   }
@@ -347,7 +379,8 @@
     try {
       await action();
     } catch (error) {
-      formError = error instanceof Error ? error.message : 'Unable to save account.';
+      formError = error instanceof AccountChangedError
+        ? tr('accountChanged') : getErrorMessage(error, 'Unable to save account.');
     }
   }
 
@@ -379,7 +412,7 @@
     qrAccount = account;
     qrDataUrl = '';
     const dataUrl = await renderQrDataUrl(accountToOtpAuthUri(account));
-    if (qrRenderRequest === request && qrAccount?.id === account.id) {
+    if (!vault.locked && vault.hasVault && qrRenderRequest === request && qrAccount?.id === account.id) {
       qrDataUrl = dataUrl;
     }
   }
@@ -571,11 +604,14 @@
   }
 
   async function deleteSelected() {
-    if (!deleting) {
+    const account = deleting;
+    if (!account) {
       return;
     }
-    await vault.deleteAccount(deleting.id);
-    deleting = null;
+    await runForm(async () => {
+      await vault.deleteAccount(account);
+      deleting = null;
+    });
   }
 
   function startAccountDrag(account: AuthenticatorAccount, event: PointerEvent) {
@@ -617,6 +653,7 @@
         height: rect.height
       };
     });
+    reorderSourceIds = itemRects.map((item) => item.id);
 
     activeDragHandle = event.currentTarget as HTMLElement;
     activeDragHandle.setPointerCapture?.(event.pointerId);
@@ -676,11 +713,9 @@
         ? null
         : moveItem(vault.sortedAccounts, state.startIndex, state.currentIndex);
     if (accounts) {
-      dragAccounts = accounts;
-    }
-    cleanupPointerDrag();
-    if (accounts) {
       void commitAccountOrder(accounts);
+    } else {
+      cleanupAccountDrag();
     }
   }
 
@@ -688,13 +723,14 @@
     if (!dragState || event.pointerId !== dragState.pointerId) {
       return;
     }
-    cleanupPointerDrag();
+    cleanupAccountDrag();
   }
 
   function cleanupAccountDrag() {
     cleanupPointerDrag();
     keyboardDraggingAccountId = null;
     dragAccounts = null;
+    reorderSourceIds = null;
   }
 
   function cleanupPointerDrag() {
@@ -778,7 +814,8 @@
           void commitAccountOrder(accounts);
         }
       } else {
-        cleanupPointerDrag();
+        cleanupAccountDrag();
+        reorderSourceIds = vault.sortedAccounts.map((item) => item.id);
         keyboardDraggingAccountId = account.id;
         dragAccounts = orderedAccounts;
       }
@@ -788,8 +825,7 @@
     if (event.key === 'Escape' && keyboardDraggingAccountId === account.id) {
       event.preventDefault();
       event.stopPropagation();
-      keyboardDraggingAccountId = null;
-      dragAccounts = null;
+      cleanupAccountDrag();
       return;
     }
 
@@ -826,6 +862,9 @@
   }
 
   async function commitAccountOrder(accounts: AuthenticatorAccount[]) {
+    const current = reorderSourceIds && isReorderCurrent(vault.sortedAccounts, reorderSourceIds);
+    cleanupAccountDrag();
+    if (!current) return;
     dragAccounts = accounts;
     reorderSaving = true;
     try {
@@ -964,7 +1003,11 @@
   {/each}
 {/snippet}
 
-<div class="contents" data-theme={themeOverride}>
+<div class={[
+  'contents',
+  vault.locked && '[&_.vault-unlocked]:hidden',
+  !vault.hasVault && '[&_[inert]]:hidden'
+]} data-theme={themeOverride}>
 <main
   class="relative flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-base-100 text-base-content"
 >
@@ -981,7 +1024,7 @@
       <p class="px-6 pb-4 text-center text-sm text-error" transition:fade={FADE_TRANSITION} role="alert">{pageScanError}</p>
     {/if}
   {:else}
-    <section class="absolute inset-0 flex min-h-0 flex-col overflow-hidden">
+    <section class="vault-unlocked absolute inset-0 flex min-h-0 flex-col overflow-hidden">
       {#if view === 'settings'}
         <div
           class="absolute inset-0 z-10 flex min-h-0 flex-col overflow-hidden bg-base-100"
@@ -1102,6 +1145,8 @@
   {/if}
 </main>
 
+<!-- The root hides unlocked content immediately, including exit animations. -->
+<div class="vault-unlocked">
 <!-- Per-account actions sheet -->
 {#if actionsFor}
   {@const account = actionsFor}
@@ -1130,6 +1175,7 @@
         <button
           type="button"
           onclick={() => {
+            formError = '';
             editing = account;
             actionsFor = null;
           }}
@@ -1142,6 +1188,7 @@
           class="text-error"
           type="button"
           onclick={() => {
+            formError = '';
             deleting = account;
             actionsFor = null;
           }}
@@ -1285,6 +1332,9 @@
   >
     <h2 class="text-lg font-bold">{tr('delete')}</h2>
     <p class="mt-2 wrap-break-word text-sm text-base-content/70">{accountTitle(deleting)}</p>
+    {#if formError}
+      <div class="alert alert-error mt-3 py-2 text-sm" role="alert">{formError}</div>
+    {/if}
     <div class="modal-action grid grid-cols-2 gap-2">
       <button class="btn" type="button" onclick={() => (deleting = null)}>{tr('cancel')}</button>
       <button class="btn btn-error" type="button" onclick={deleteSelected}>{tr('delete')}</button>
@@ -1315,4 +1365,5 @@
     </div>
   </MotionDialog>
 {/if}
+</div>
 </div>

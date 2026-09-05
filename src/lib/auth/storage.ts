@@ -19,7 +19,7 @@ export async function saveStoredVault(vault: StoredVault): Promise<void> {
 }
 
 export async function clearStoredVault(): Promise<void> {
-  await removeStorageValue(getChromeStorage(), VAULT_KEY);
+  await removeStorageValue('local', VAULT_KEY);
 }
 
 export async function loadVaultSessionKey(fingerprint: string): Promise<JsonWebKey | null> {
@@ -39,7 +39,7 @@ export async function saveVaultSessionKey(fingerprint: string, key: JsonWebKey):
 }
 
 export async function clearVaultSessionKey(): Promise<void> {
-  await removeStorageValue(getSessionStorage(), VAULT_SESSION_KEY);
+  await removeStorageValue('session', VAULT_SESSION_KEY);
 }
 
 async function readStorage<T extends Record<string, unknown>>(key: string): Promise<T> {
@@ -97,9 +97,10 @@ async function writeStorage(
 }
 
 async function removeStorageValue(
-  storage: chrome.storage.StorageArea | chrome.storage.SessionStorageArea | null,
+  area: 'local' | 'session',
   key: string
 ): Promise<void> {
+  const storage = area === 'local' ? getChromeStorage() : getSessionStorage();
   if (storage) {
     await new Promise<void>((resolve, reject) => {
       storage.remove(key, () => settleChromeCallback(resolve, reject));
@@ -107,8 +108,7 @@ async function removeStorageValue(
     return;
   }
 
-  localStorage.removeItem(key);
-  sessionStorage.removeItem(key);
+  (area === 'local' ? localStorage : sessionStorage).removeItem(key);
 }
 
 function getChromeStorage(): chrome.storage.LocalStorageArea | null {

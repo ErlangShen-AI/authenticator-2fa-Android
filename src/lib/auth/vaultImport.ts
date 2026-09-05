@@ -4,7 +4,8 @@ import {
   loadVaultSessionKey,
   saveStoredVault
 } from './storage';
-import { normalizeImportedAccounts } from './otp';
+import { accountFingerprint, normalizeImportedAccounts } from './otp';
+import { reconcileSyncAccounts, type BrowserSyncState } from './browserSync';
 import type {
   AuthenticatorAccount,
   ImportResult,
@@ -20,8 +21,10 @@ import {
   unlockVaultEnvelopeWithKey
 } from './vaultCrypto';
 import { createPlainVaultRecord, isEncryptedVaultRecord, isPlainVaultRecord } from './vaultRecords';
+import { withVaultLock } from './vaultLock';
 
 interface MergeResult {
+  browserSync?: BrowserSyncState;
   accounts: AuthenticatorAccount[];
   imported: number;
   skipped: number;
@@ -40,13 +43,23 @@ type LoadedVault =
       key: CryptoKey;
     };
 
-export async function importTextIntoStoredVault(text: string): Promise<ImportResult> {
+export function importTextIntoStoredVault(text: string): Promise<ImportResult> {
+  return withVaultLock(() => importTextIntoStoredVaultNow(text));
+}
+
+async function importTextIntoStoredVaultNow(text: string): Promise<ImportResult> {
   const parsed = importAnyText(text);
   const loaded = await loadUnlockedStoredVault();
-  const merged = mergeImportedAccounts(loaded.data.accounts, parsed.accounts);
+  const merged = await mergeImportedAccounts(
+    loaded.data.accounts,
+    parsed.accounts,
+    loaded.data.browserSync
+  );
 
   if (merged.imported > 0) {
     await saveLoadedVault(loaded, {
+      ...loaded.data,
+      ...(merged.browserSync ? { browserSync: merged.browserSync } : {}),
       accounts: merged.accounts,
       settings: normalizeAppSettings(loaded.data.settings)
     });
@@ -72,10 +85,11 @@ export function getImportResultMessage(result: ImportResult): string {
   return 'No account was found to import.';
 }
 
-export function mergeImportedAccounts(
+export async function mergeImportedAccounts(
   existing: AuthenticatorAccount[],
-  incoming: AuthenticatorAccount[]
-): MergeResult {
+  incoming: AuthenticatorAccount[],
+  browserSync?: BrowserSyncState
+): Promise<MergeResult> {
   const existingAccounts = normalizeAccountOrder(existing);
   const incomingAccounts = normalizeImportedAccounts(incoming);
   const fingerprints = new Set(existingAccounts.map(accountFingerprint));
@@ -91,7 +105,8 @@ export function mergeImportedAccounts(
     }
 
     fingerprints.add(fingerprint);
-    const id = accountIds.has(account.id) ? crypto.randomUUID() : account.id;
+    // An explicit restore must not inherit an unseen remote deletion.
+    const id = browserSync || accountIds.has(account.id) ? crypto.randomUUID() : account.id;
     accountIds.add(id);
     additions.push({
       ...account,
@@ -100,8 +115,13 @@ export function mergeImportedAccounts(
     });
   }
 
+  const accounts = [...existingAccounts, ...additions];
+  const restored = browserSync && additions.length > 0
+    ? await reconcileSyncAccounts(browserSync, accounts, [], additions.map((account) => account.id))
+    : null;
   return {
-    accounts: [...existingAccounts, ...additions],
+    accounts: restored?.accounts ?? accounts,
+    ...(restored ? { browserSync: restored.state } : {}),
     imported: additions.length,
     skipped
   };
@@ -174,6 +194,7 @@ async function loadUnlockedStoredVault(): Promise<LoadedVault> {
     return {
       type: 'plain',
       data: {
+        ...stored.data,
         accounts: normalizeAccountOrder(stored.data.accounts),
         settings: normalizeAppSettings(stored.data.settings)
       },
@@ -195,6 +216,7 @@ async function loadUnlockedStoredVault(): Promise<LoadedVault> {
   return {
     type: 'encrypted',
     data: {
+      ...unlocked.data,
       accounts: normalizeAccountOrder(unlocked.data.accounts),
       settings: normalizeAppSettings(unlocked.data.settings)
     },
@@ -205,6 +227,7 @@ async function loadUnlockedStoredVault(): Promise<LoadedVault> {
 
 async function saveLoadedVault(loaded: LoadedVault, data: VaultData): Promise<void> {
   const normalizedData = {
+    ...data,
     accounts: normalizeAccountOrder(data.accounts),
     settings: normalizeAppSettings(data.settings)
   };
@@ -224,13 +247,4 @@ function getSortOrder(account: AuthenticatorAccount): number {
 
 function isSortOrder(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
-}
-
-function accountFingerprint(account: AuthenticatorAccount): string {
-  return [
-    account.type,
-    account.issuer.trim().toLowerCase(),
-    account.label.trim().toLowerCase(),
-    account.secret.trim().toUpperCase()
-  ].join('\u001f');
 }
