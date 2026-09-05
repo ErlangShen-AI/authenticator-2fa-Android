@@ -91,10 +91,11 @@ describe('importTextIntoStoredVault', () => {
     expect(await loadStoredVault()).toBeNull();
   });
 
-  test('reports duplicates without rewriting account order', async () => {
-    await importTextIntoStoredVault(ALICE_URI);
+  test('reports duplicates without resetting an HOTP counter or account order', async () => {
+    const hotpUri = ALICE_URI.replace('/totp/', '/hotp/');
+    await importTextIntoStoredVault(`${hotpUri}&counter=100`);
 
-    const duplicate = await importTextIntoStoredVault(ALICE_URI);
+    const duplicate = await importTextIntoStoredVault(`${hotpUri}&counter=1`);
 
     expect(duplicate.imported).toBe(0);
     expect(duplicate.skipped).toBe(1);
@@ -105,19 +106,27 @@ describe('importTextIntoStoredVault', () => {
     }
     expect(stored.data.accounts).toHaveLength(1);
     expect(stored.data.accounts[0].sortOrder).toBe(0);
+    expect(stored.data.accounts[0].counter).toBe(100);
   });
 
-  test('skips duplicate accounts within the same import batch', async () => {
-    const result = await importTextIntoStoredVault([ALICE_URI, ALICE_URI].join('\n'));
+  test('preserves different OTP parameters while skipping exact duplicates', async () => {
+    await importTextIntoStoredVault(ALICE_URI);
+    const variants = ['algorithm=SHA256', 'digits=8', 'period=60'].map((query) => `${ALICE_URI}&${query}`);
+    const result = await importTextIntoStoredVault([ALICE_URI, ...variants, variants[0]].join('\n'));
 
-    expect(result.imported).toBe(1);
-    expect(result.skipped).toBe(1);
+    expect(result.imported).toBe(3);
+    expect(result.skipped).toBe(2);
 
     const stored = await loadStoredVault();
     if (!isPlainVaultRecord(stored)) {
       throw new Error('Expected a plain vault record.');
     }
-    expect(stored.data.accounts).toHaveLength(1);
+    expect(stored.data.accounts.map(({ algorithm, digits, period }) => [algorithm, digits, period])).toEqual([
+      ['SHA-1', 6, 30],
+      ['SHA-256', 6, 30],
+      ['SHA-1', 8, 30],
+      ['SHA-1', 6, 60]
+    ]);
   });
 
   test('regenerates imported account IDs that collide with existing accounts', async () => {

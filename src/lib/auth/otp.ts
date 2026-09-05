@@ -11,6 +11,18 @@ import {
 const STEAM_ALPHABET = '23456789BCDFGHJKMNPQRTVWXY';
 const IMPORTED_ACCOUNT_ERROR = 'Imported account is not valid.';
 
+export function accountFingerprint(account: AuthenticatorAccount): string {
+  return JSON.stringify([
+    account.type,
+    account.issuer.trim().toLowerCase(),
+    account.label.trim().toLowerCase(),
+    account.secret.trim().toUpperCase(),
+    account.algorithm,
+    account.digits,
+    account.period
+  ]);
+}
+
 export function createAccount(draft: AccountDraft): AuthenticatorAccount {
   const now = new Date().toISOString();
   const type = draft.type ?? 'totp';

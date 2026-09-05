@@ -4,7 +4,7 @@ import {
   loadVaultSessionKey,
   saveStoredVault
 } from './storage';
-import { normalizeImportedAccounts } from './otp';
+import { accountFingerprint, normalizeImportedAccounts } from './otp';
 import { reconcileSyncAccounts, type BrowserSyncState } from './browserSync';
 import type {
   AuthenticatorAccount,
@@ -247,13 +247,4 @@ function getSortOrder(account: AuthenticatorAccount): number {
 
 function isSortOrder(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
-}
-
-function accountFingerprint(account: AuthenticatorAccount): string {
-  return [
-    account.type,
-    account.issuer.trim().toLowerCase(),
-    account.label.trim().toLowerCase(),
-    account.secret.trim().toUpperCase()
-  ].join('\u001f');
 }

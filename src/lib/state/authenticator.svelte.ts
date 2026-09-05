@@ -1,10 +1,11 @@
 import type {} from 'svelte';
 import type { BrowserSyncState } from '../auth/browserSync';
-import { SYNC_PREFIX } from '../auth/browserSync';
+import { accountOrigin, SYNC_PREFIX } from '../auth/browserSync';
 import { connectBrowserSync, deleteBrowserSyncGroup, prepareBrowserSync } from '../auth/browserSyncSession';
 import { BrowserSyncError, browserSyncAvailable, type BrowserSyncErrorCode } from '../auth/browserSyncStorage';
 import { withVaultLock } from '../auth/vaultLock';
 import { createAccount, generateOtpCode, updateAccount } from '../auth/otp';
+import { AccountChangedError } from '../auth/errors';
 import {
   clearStoredVault,
   clearVaultSessionKey,
@@ -44,6 +45,8 @@ import type {
   VaultEnvelope
 } from '../auth/types';
 import { createDefaultAppSettings, normalizeAppSettings } from '../auth/types';
+
+type AccountReference = string | AuthenticatorAccount;
 
 export class AuthenticatorVault {
   initialized = $state(false);
@@ -153,14 +156,17 @@ export class AuthenticatorVault {
     await this.enqueueMutation(() => this.mergeAccounts([account]));
   }
 
-  async updateAccount(id: string, draft: Partial<AccountDraft>): Promise<void> {
+  async updateAccount(reference: AccountReference, draft: Partial<AccountDraft>): Promise<void> {
+    const target = typeof reference === 'string' ? reference : { ...reference };
     const update = { ...draft };
-    await this.enqueueMutation(() => this.updateAccountNow(id, update));
+    await this.enqueueMutation(() => this.updateAccountNow(target, update));
   }
 
-  async deleteAccount(id: string): Promise<void> {
+  async deleteAccount(reference: AccountReference): Promise<void> {
+    const snapshot = typeof reference === 'string' ? reference : { ...reference };
     await this.enqueueMutation(async () => {
-      const accounts = this.accounts.filter((account) => account.id !== id);
+      const target = await this.requireAccount(snapshot);
+      const accounts = this.accounts.filter((account) => account.id !== target.id);
       await this.persistData({ accounts, settings: this.settings }, 'Account removed.');
       await this.refreshCodes();
     });
@@ -173,7 +179,9 @@ export class AuthenticatorVault {
         return;
       }
 
-      const accounts = reorderAccountsById(this.sortedAccounts, requestedOrder);
+      const resolvedOrder = requestedOrder.map((id) => this.findAccount(id)?.id);
+      if (!resolvedOrder.every((id) => id !== undefined)) return;
+      const accounts = reorderAccountsById(this.sortedAccounts, resolvedOrder);
       if (!accounts) {
         return;
       }
@@ -182,13 +190,12 @@ export class AuthenticatorVault {
     });
   }
 
-  async advanceHotp(id: string): Promise<void> {
+  async advanceHotp(reference: AccountReference): Promise<void> {
+    const snapshot = typeof reference === 'string' ? reference : { ...reference };
     await this.enqueueMutation(async () => {
-      const account = this.accounts.find((item) => item.id === id);
-      if (!account || account.type !== 'hotp') {
-        return;
-      }
-      await this.updateAccountNow(id, { counter: account.counter + 1 });
+      const account = await this.requireAccount(snapshot);
+      if (account.type !== 'hotp') throw new AccountChangedError();
+      await this.updateAccountNow(account.id, { counter: account.counter + 1 });
     });
   }
 
@@ -325,20 +332,8 @@ export class AuthenticatorVault {
     this.clearStatus();
     try {
       await clearStoredVault();
-      this.storedSnapshot = 'null';
-      this.browserSync = undefined;
-      this.syncStatus = 'off';
-      this.syncError = '';
+      this.applyVaultSnapshot(null);
       await clearVaultSessionKey();
-      this.key = null;
-      this.encryptedVault = null;
-      this.plainVault = null;
-      this.accounts = [];
-      this.codes = {};
-      this.settings = createDefaultAppSettings();
-      this.hasVault = false;
-      this.passwordProtected = false;
-      this.locked = false;
     } catch (error) {
       this.error = getErrorMessage(error);
     } finally {
@@ -391,6 +386,8 @@ export class AuthenticatorVault {
   }
 
   private applyVaultSnapshot(stored: StoredVault | null, unlocked: UnlockedVault | null = null): void {
+    const sameEncryptedVault = isEncryptedVaultRecord(stored) && this.encryptedVault &&
+      getVaultKeyFingerprint(stored) === getVaultKeyFingerprint(this.encryptedVault);
     this.storedSnapshot = JSON.stringify(stored);
     this.browserSync = undefined;
     this.syncStatus = 'off';
@@ -400,7 +397,7 @@ export class AuthenticatorVault {
     this.plainVault = isPlainVaultRecord(stored) ? stored : null;
     this.accounts = [];
     this.codes = {};
-    this.settings = createDefaultAppSettings();
+    if (!sameEncryptedVault) this.settings = createDefaultAppSettings();
     this.hasVault = Boolean(this.encryptedVault || this.plainVault);
     this.passwordProtected = Boolean(this.encryptedVault);
     this.locked = this.passwordProtected && !unlocked;
@@ -434,14 +431,48 @@ export class AuthenticatorVault {
     return result;
   }
 
-  private async updateAccountNow(id: string, draft: Partial<AccountDraft>): Promise<void> {
-    const index = this.accounts.findIndex((account) => account.id === id);
-    if (index === -1) {
-      return;
-    }
+  private findAccount(id: string): AuthenticatorAccount | undefined {
+    const direct = this.accounts.find((account) => account.id === id);
+    if (direct || !this.browserSync) return direct;
+
+    const records = Object.values(this.browserSync.records);
+    // A stale form must never cross a deletion into a later restoration.
+    if (records.some((record) => record.id === id)) return undefined;
+    const aliases = records.filter((record) =>
+      record.account && !record.restorationId && record.mergedIds?.includes(id));
+    if (aliases.length !== 1) return undefined;
+    return this.accounts.find((account) => account.id === aliases[0].id);
+  }
+
+  private async findReferencedAccount(reference: AuthenticatorAccount): Promise<AuthenticatorAccount | undefined> {
+    const origin = await accountOrigin(reference);
+    const records = Object.values(this.browserSync?.records ?? {}).filter((record) =>
+      record.origins?.includes(origin) && (!record.restorationId || record.restorationId === reference.id));
+    if (records.some((record) => record.account === null)) return undefined;
+    const candidates = this.accounts.filter((account) => records.some((record) => record.id === account.id));
+    if (candidates.length) return candidates.length === 1 ? candidates[0] : undefined;
+
+    const account = this.findAccount(reference.id);
+    // Legacy records may have no origin. Matching credentials still proves an
+    // existing ID or alias; an independently edited ID collision does not.
+    return account && await accountOrigin({ ...account, id: reference.id }) === origin ? account : undefined;
+  }
+
+  private async requireAccount(reference: AccountReference): Promise<AuthenticatorAccount> {
+    if (this.locked) throw new Error('Unlock the vault before making changes.');
+    const account = typeof reference === 'string'
+      ? this.findAccount(reference)
+      : await this.findReferencedAccount(reference);
+    if (!account) throw new AccountChangedError();
+    return account;
+  }
+
+  private async updateAccountNow(reference: AccountReference, draft: Partial<AccountDraft>): Promise<void> {
+    const account = await this.requireAccount(reference);
+    const index = this.accounts.indexOf(account);
 
     const accounts = [...this.accounts];
-    accounts[index] = updateAccount(accounts[index], draft);
+    accounts[index] = updateAccount(account, draft);
     await this.persistData({ accounts, settings: this.settings }, 'Account updated.');
     await this.refreshCodes();
   }

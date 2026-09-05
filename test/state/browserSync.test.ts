@@ -6,6 +6,7 @@ import { unlockVaultEnvelope } from '../../src/lib/auth/vaultCrypto';
 import { isEncryptedVaultRecord } from '../../src/lib/auth/vaultRecords';
 import { AuthenticatorVault } from '../../src/lib/state/authenticator.svelte';
 import { importTextIntoStoredVault } from '../../src/lib/auth/vaultImport';
+import { createAccount } from '../../src/lib/auth/otp';
 import { createBrowserSyncNetwork, type BrowserSyncDevice } from '../helpers/browserSync';
 
 const PASSWORD = 'correct horse battery staple';
@@ -69,6 +70,113 @@ describe('Browser Sync vault integration', () => {
     firstDevice.install();
     await first.syncNow();
     expect(first.accounts).toEqual([expect.objectContaining({ id: originalId, secret: SECRET })]);
+  });
+
+  test('pending account actions follow an identity changed by a joining duplicate', async () => {
+    const network = createBrowserSyncNetwork();
+    const firstDevice = network.createDevice();
+    const first = await createProtectedVault(firstDevice);
+    await first.importText(JSON.stringify({ accounts: [
+      { ...createAccount({ label: 'Alice', secret: SECRET, type: 'hotp', counter: 4 }), id: 'z-original' },
+      createAccount({ label: 'Bob', secret: SECRET })
+    ] }));
+    const alice = first.accounts[0];
+    const aliceId = alice.id;
+    const bobId = first.accounts[1].id;
+    await first.updateSettings({ accountSortMode: 'manual' });
+    const recoveryKey = generateSyncRecoveryKey();
+    await first.startBrowserSync(recoveryKey, false);
+
+    const second = await createProtectedVault(network.createDevice());
+    await second.importText(JSON.stringify({ accounts: [{ ...first.accounts[0], id: '!joining-copy' }] }));
+    await second.startBrowserSync(recoveryKey, true);
+    firstDevice.install();
+    await first.syncNow();
+    expect(first.accounts[0].id).not.toBe(aliceId);
+
+    await first.updateAccount(alice, { label: 'Alice edited' });
+    expect(labels(first)).toEqual(['Alice edited', 'Bob']);
+    await first.advanceHotp(aliceId);
+    expect(first.accounts[0].counter).toBe(5);
+    await first.reorderAccounts([bobId, aliceId]);
+    expect(first.sortedAccounts.map((account) => account.label)).toEqual(['Bob', 'Alice edited']);
+    await first.deleteAccount(alice);
+    expect(labels(first)).toEqual(['Bob']);
+
+    await first.syncNow();
+    const reopened = new AuthenticatorVault();
+    await reopened.initialize();
+    expect(labels(reopened)).toEqual(['Bob']);
+  });
+
+  test('a pre-join account form cannot edit or delete a different credential sharing its old ID', async () => {
+    const network = createBrowserSyncNetwork();
+    const firstDevice = network.createDevice();
+    const first = await createProtectedVault(firstDevice, ['Alice']);
+    const original = first.accounts[0];
+    const recoveryKey = generateSyncRecoveryKey();
+    await first.startBrowserSync(recoveryKey, false);
+
+    const secondDevice = network.createDevice();
+    const second = await createProtectedVault(secondDevice);
+    await second.importText(JSON.stringify({ accounts: [original] }));
+    const localSecret = 'KRUGS4ZANFZSAYJA';
+    await second.updateAccount(original.id, { secret: localSecret });
+    const pending = second.accounts[0];
+    const joiningPage = new AuthenticatorVault();
+    await joiningPage.initialize();
+    await joiningPage.startBrowserSync(recoveryKey, true);
+
+    await second.updateAccount(pending, { label: 'Local credential' });
+    expect(second.accounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: original.id, label: 'Alice', secret: SECRET }),
+      expect.objectContaining({ label: 'Local credential', secret: localSecret })
+    ]));
+    await second.deleteAccount(pending);
+    expect(second.accounts).toEqual([expect.objectContaining({ id: original.id, secret: SECRET })]);
+    await second.syncNow();
+
+    firstDevice.install();
+    await first.syncNow();
+    expect(first.accounts).toEqual([expect.objectContaining({ id: original.id, secret: SECRET })]);
+  });
+
+  test('pending actions cannot use an old alias to change a new restoration', async () => {
+    const network = createBrowserSyncNetwork();
+    const firstDevice = network.createDevice();
+    const first = await createProtectedVault(firstDevice, ['Alice']);
+    const original = first.accounts[0];
+    const recoveryKey = generateSyncRecoveryKey();
+    await first.startBrowserSync(recoveryKey, false);
+    const liveRecords = structuredClone(network.cloud);
+
+    const deletingDevice = network.createDevice();
+    const deleting = await createProtectedVault(deletingDevice);
+    await deleting.startBrowserSync(recoveryKey, true);
+    await deleting.deleteAccount(original.id);
+    await deleting.syncNow();
+    const deletedRecords = structuredClone(network.cloud);
+    for (const key of Object.keys(network.cloud)) {
+      if (!key.endsWith(':marker')) delete network.cloud[key];
+    }
+
+    const restoringDevice = network.createDevice();
+    const restoring = await createProtectedVault(restoringDevice);
+    await restoring.startBrowserSync(recoveryKey, true);
+    await restoring.importText(JSON.stringify({ accounts: [original] }));
+    Object.assign(network.cloud, liveRecords);
+    await restoring.syncNow();
+    Object.assign(network.cloud, deletedRecords);
+    await restoring.syncNow();
+    const restoredId = restoring.accounts[0].id;
+    expect(restoredId).not.toBe(original.id);
+
+    firstDevice.install();
+    await first.syncNow();
+    expect(first.accounts).toEqual([expect.objectContaining({ id: restoredId, label: 'Alice' })]);
+    await expect(first.updateAccount(original, { label: 'Stale edit' })).rejects.toThrow();
+    await expect(first.deleteAccount(original.id)).rejects.toThrow();
+    expect(labels(first)).toEqual(['Alice']);
   });
 
   test('keeps secrets and the recovery key out of sync storage and the local vault envelope', async () => {
@@ -492,9 +600,11 @@ describe('Browser Sync vault integration', () => {
     await first.startBrowserSync(generateSyncRecoveryKey(), false);
     const second = new AuthenticatorVault();
     await second.initialize();
+    const pending = second.accounts[0];
     const before = structuredClone(device.local.values);
 
     await first.lock();
+    await expect(second.deleteAccount(pending)).rejects.toThrow('Unlock');
     await expect(second.addAccount({ label: 'Blocked account', secret: SECRET })).rejects.toThrow('Unlock');
 
     expect(second.locked).toBe(true);

@@ -12,7 +12,8 @@ Browser Sync is optional and uses the existing storage permission. It adds no ac
 
 - Sync works within the same browser provider and extension identity on supported devices. It does not bridge providers; platform support varies.
 - Changes merge while the extension is open and unlocked. The browser handles delivery. A successful check cannot confirm another device received the changes.
-- Each device writes separate encrypted records. Concurrent edits resolve deterministically; deletions win against offline edits. Explicit restores get fresh identities that older deletions cannot remove. Preferences and ordering stay local.
+- Each device writes separate encrypted records. Concurrent edits resolve deterministically; deletions win against offline edits. Restores and credential replacements get fresh identities. Encrypted origin fingerprints recognize delayed copies without confusing different credentials. Preferences and ordering stay local.
+- When older deletion records lack origin fingerprints, joining keeps local copies rather than guessing which credentials were deleted.
 - HOTP counters never move backward during merging, but simultaneous use can repeat or skip codes. Use HOTP on one device at a time.
 - Pending changes save locally before upload and retry after reopening. Invalid remote data pauses sync without replacing local accounts.
 - Browser storage allows about 100 KB total and 8 KB per item, with item and write limits. Many devices or retained deletion records can fill it. Local accounts remain usable if sync fails.

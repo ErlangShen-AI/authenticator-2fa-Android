@@ -13,6 +13,81 @@ const DEVICE_A = '00000000-0000-4000-8000-000000000001';
 const DEVICE_B = '00000000-0000-4000-8000-000000000002';
 
 describe('Browser Sync joining', () => {
+  test('preserves independently changed credentials when their shared backup ID arrives after joining', async () => {
+    const network = createBrowserSyncNetwork();
+    network.createDevice().install();
+    const recoveryKey = generateSyncRecoveryKey();
+    const original = createAccount({ label: 'Account', secret: 'JBSWY3DPEHPK3PXP' });
+    const local = { ...original, secret: 'KRUGS4ZANFZSAYJA' };
+    await seedGroup(network.cloud, recoveryKey, []);
+
+    const joined = await connectBrowserSync(recoveryKey, true, [local]);
+    const initial = await prepareBrowserSync(joined.state, joined.accounts);
+    await initial.publish();
+    await seedRecords(network.cloud, recoveryKey, [{ id: original.id, revision: 2, deviceId: DEVICE_A, account: original }]);
+
+    const delivered = await prepareBrowserSync(initial.state, initial.accounts);
+    await delivered.publish();
+    expect(delivered.accounts.map((account) => account.secret).sort()).toEqual([original.secret, local.secret].sort());
+    expect(new Set(delivered.accounts.map((account) => account.id)).size).toBe(2);
+
+    network.createDevice().install();
+    const nextDevice = await connectBrowserSync(recoveryKey, true, []);
+    expect(nextDevice.accounts.map((account) => account.secret).sort()).toEqual([original.secret, local.secret].sort());
+    const deleted = await prepareBrowserSync(nextDevice.state, nextDevice.accounts.filter((account) => account.secret === original.secret));
+    await deleted.publish();
+    expect((await connectBrowserSync(recoveryKey, true, [])).accounts.map((account) => account.secret)).toEqual([original.secret]);
+  });
+
+  test('keeps a joining copy deleted when its original record arrives only after deletion', async () => {
+    const network = createBrowserSyncNetwork();
+    network.createDevice().install();
+    const recoveryKey = generateSyncRecoveryKey();
+    const original = createAccount({ label: 'Account', secret: 'JBSWY3DPEHPK3PXP', type: 'hotp', counter: 1 });
+    await seedGroup(network.cloud, recoveryKey, []);
+    const joined = await connectBrowserSync(recoveryKey, true, [original]);
+    const initial = await prepareBrowserSync(joined.state, joined.accounts);
+    await initial.publish();
+    const deleted = await prepareBrowserSync(initial.state, []);
+    await deleted.publish();
+
+    await seedRecords(network.cloud, recoveryKey, [{
+      id: original.id, revision: 3, deviceId: DEVICE_A,
+      account: { ...original, label: 'Renamed elsewhere', counter: 20 }
+    }]);
+    const delivered = await prepareBrowserSync(deleted.state, []);
+    await delivered.publish();
+    expect(delivered.accounts).toEqual([]);
+
+    network.createDevice().install();
+    expect((await connectBrowserSync(recoveryKey, true, [])).accounts).toEqual([]);
+  });
+
+  test('changing a live account to a deleted independent credential does not delete the live identity', async () => {
+    const network = createBrowserSyncNetwork();
+    network.createDevice().install();
+    const recoveryKey = generateSyncRecoveryKey();
+    const original = createAccount({ label: 'Account', secret: 'JBSWY3DPEHPK3PXP' });
+    const changed = { ...original, secret: 'KRUGS4ZANFZSAYJA' };
+    const created = await connectBrowserSync(recoveryKey, false, [original]);
+    const initial = await prepareBrowserSync(created.state, created.accounts);
+    await initial.publish();
+
+    const joined = await connectBrowserSync(recoveryKey, true, [changed]);
+    const uploaded = await prepareBrowserSync(joined.state, joined.accounts);
+    await uploaded.publish();
+    const deleted = await prepareBrowserSync(uploaded.state, uploaded.accounts.filter((account) => account.secret === original.secret));
+    await deleted.publish();
+
+    const edited = await prepareBrowserSync(initial.state, initial.accounts.map((account) => ({ ...account, secret: changed.secret })));
+    await edited.publish();
+    const nextDevice = await connectBrowserSync(recoveryKey, true, []);
+    expect(nextDevice.accounts).toEqual([expect.objectContaining({ secret: changed.secret })]);
+    const removed = await prepareBrowserSync(nextDevice.state, []);
+    await removed.publish();
+    expect((await connectBrowserSync(recoveryKey, true, nextDevice.accounts)).accounts).toEqual([]);
+  });
+
   test('merges matching encrypted records delivered after the joining device publishes its copy', async () => {
     const network = createBrowserSyncNetwork();
     const device = network.createDevice();
@@ -29,11 +104,11 @@ describe('Browser Sync joining', () => {
     const delivered = await prepareBrowserSync(initial.state, initial.accounts);
     await delivered.publish();
 
-    expect(delivered.accounts).toEqual([{ ...original, sortOrder: 6 }]);
+    expect(delivered.accounts).toEqual([{ ...original, id: expect.any(String), sortOrder: 6 }]);
     expect(delivered.writes).toEqual([
-      expect.objectContaining({ id: original.id, deviceId: joined.state.deviceId, mergedIds: [local.id] })
+      expect.objectContaining({ id: delivered.accounts[0].id, deviceId: joined.state.deviceId })
     ]);
-    expect((await connectBrowserSync(recoveryKey, true, [])).accounts).toEqual([original]);
+    expect((await connectBrowserSync(recoveryKey, true, [])).accounts).toEqual([{ ...original, id: delivered.accounts[0].id }]);
     const repeated = await prepareBrowserSync(delivered.state, delivered.accounts);
     const writes = device.sync.writes;
     expect(repeated.state).toEqual(delivered.state);
@@ -90,7 +165,7 @@ describe('Browser Sync joining', () => {
     await prepared.publish();
 
     expect((await connectBrowserSync(recoveryKey, true, [])).accounts).toEqual([
-      expect.objectContaining({ id: [account.id, local.id].sort()[0], counter: 100 })
+      expect.objectContaining({ id: prepared.accounts[0].id, counter: 100 })
     ]);
 
     const deleted = await prepareBrowserSync(prepared.state, []);

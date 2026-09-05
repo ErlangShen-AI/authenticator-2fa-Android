@@ -49,8 +49,13 @@ export function installMemoryStorage(): { localStorage: MemoryStorage; sessionSt
 export function installStructuredCloneChromeStorage(
   { localWriteDelayMs = 0 }: { localWriteDelayMs?: number } = {}
 ): void {
-  const local = createChromeStorageArea(localWriteDelayMs);
-  const session = createChromeStorageArea();
+  type ChangeListener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => void;
+  const listeners = new Set<ChangeListener>();
+  const notify = (area: string) => (changes: Record<string, chrome.storage.StorageChange>) => {
+    for (const listener of listeners) listener(changes, area);
+  };
+  const local = createChromeStorageArea(notify('local'), localWriteDelayMs);
+  const session = createChromeStorageArea(notify('session'));
 
   Object.defineProperty(globalThis, 'chrome', {
     configurable: true,
@@ -60,13 +65,20 @@ export function installStructuredCloneChromeStorage(
       },
       storage: {
         local,
-        session
+        session,
+        onChanged: {
+          addListener: (listener: ChangeListener) => listeners.add(listener),
+          removeListener: (listener: ChangeListener) => listeners.delete(listener)
+        }
       }
     }
   });
 }
 
-function createChromeStorageArea(writeDelayMs = 0) {
+function createChromeStorageArea(
+  notify: (changes: Record<string, chrome.storage.StorageChange>) => void,
+  writeDelayMs = 0
+) {
   const values = new Map<string, unknown>();
 
   return {
@@ -77,10 +89,13 @@ function createChromeStorageArea(writeDelayMs = 0) {
       // Firefox extension storage structured-clones values and rejects proxies.
       const cloned = structuredClone(items) as Record<string, unknown>;
       const commit = () => {
+        const changes: Record<string, chrome.storage.StorageChange> = {};
         for (const [key, value] of Object.entries(cloned)) {
+          changes[key] = { oldValue: values.get(key), newValue: value };
           values.set(key, value);
         }
         callback();
+        notify(changes);
       };
       if (writeDelayMs > 0) {
         setTimeout(commit, writeDelayMs);
@@ -89,8 +104,10 @@ function createChromeStorageArea(writeDelayMs = 0) {
       }
     },
     remove(key: string, callback: () => void): void {
+      const oldValue = values.get(key);
       values.delete(key);
       callback();
+      if (oldValue !== undefined) notify({ [key]: { oldValue } });
     }
   };
 }

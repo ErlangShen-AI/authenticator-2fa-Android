@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   joinSyncAccounts,
+  withSyncOrigin,
   createSyncMarker,
   decryptSyncRecord,
   encryptSyncRecord,
@@ -50,7 +51,7 @@ describe('Browser Sync encryption', () => {
     expect(first.storageKey).toBe(second.storageKey);
     expect(first.value.data).not.toBe(second.value.data);
     expect(first.value.iv).not.toBe(second.value.iv);
-    expect(await decryptSyncRecord(key, first.storageKey, first.value)).toEqual(record);
+    expect(await decryptSyncRecord(key, first.storageKey, first.value)).toEqual(await withSyncOrigin(record));
     for (const privateValue of [account.id, account.issuer, account.label, account.secret, key]) {
       expect(JSON.stringify(first)).not.toContain(privateValue);
     }
@@ -69,12 +70,12 @@ describe('Browser Sync encryption', () => {
   test('authenticates duplicate identities and stores them in a canonical form', async () => {
     const key = generateSyncRecoveryKey();
     const item = await encryptSyncRecord(key, { ...record, mergedIds: ['z', 'a', 'z', record.id] });
-    expect(await decryptSyncRecord(key, item.storageKey, item.value)).toEqual({ ...record, mergedIds: ['a', 'z'] });
+    expect(await decryptSyncRecord(key, item.storageKey, item.value)).toEqual(await withSyncOrigin({ ...record, mergedIds: ['a', 'z'] }));
     const deleted = await encryptSyncRecord(key, { ...record, account: null, mergedIds: ['z', 'a'] });
     expect(await decryptSyncRecord(key, deleted.storageKey, deleted.value)).toEqual({ ...record, account: null, mergedIds: ['a', 'z'] });
     const restored = { ...record, mergedIds: ['old-copy'], restorationId: record.id };
     const restoration = await encryptSyncRecord(key, restored);
-    expect(await decryptSyncRecord(key, restoration.storageKey, restoration.value)).toEqual(restored);
+    expect(await decryptSyncRecord(key, restoration.storageKey, restoration.value)).toEqual(await withSyncOrigin(restored));
   });
 
   test('rejects wrong keys, tampering, and ciphertext moved to a different slot', async () => {
@@ -127,6 +128,9 @@ describe('Browser Sync encryption', () => {
       { ...record, mergedIds: [null] },
       { ...record, mergedIds: [''] },
       { ...record, mergedIds: ['a'.repeat(513)] },
+      { ...record, origins: 'invalid' },
+      { ...record, origins: [null] },
+      { ...record, origins: ['not-a-fingerprint'] },
       { ...record, restorationId: null },
       { ...record, restorationId: 'another-identity' }
     ];
@@ -360,52 +364,59 @@ describe('Browser Sync reconciliation', () => {
 });
 
 describe('joining an existing Browser Sync group', () => {
-  test('deduplicates matching accounts with different IDs and keeps remote account details', () => {
+  test('deduplicates matching accounts with different IDs and keeps remote account details', async () => {
     const local = { ...account, id: 'z-local', label: account.label.toUpperCase(), createdAt: '2025-01-01T00:00:00.000Z' };
     const distinct = createAccount({ label: 'Separate', secret: account.secret });
-    const result = joinSyncAccounts(state([record], DEVICE_B), [local, distinct]);
-    expect(result.accounts).toEqual([account, distinct]);
-    expect(result.state.records[account.id].mergedIds).toContain(local.id);
+    const result = await joinSyncAccounts(state([record], DEVICE_B), [local, distinct]);
+    expect(result.accounts).toEqual([
+      { ...account, id: expect.any(String) },
+      { ...distinct, id: expect.any(String) }
+    ]);
   });
 
-  test('does not link a conflicting alias to another matching remote credential', () => {
+  test('does not link a conflicting alias to another matching remote credential', async () => {
     const original = { ...record, mergedIds: ['old-copy'] };
     const otherAccount = { ...account, id: 'other', secret: 'KRUGS4ZANFZSAYJA' };
     const other = { ...record, id: otherAccount.id, account: otherAccount };
-    const joined = joinSyncAccounts(state([original, other], DEVICE_B), [{ ...otherAccount, id: 'old-copy' }]);
+    const joined = await joinSyncAccounts(state([original, other], DEVICE_B), [{ ...otherAccount, id: 'old-copy' }]);
 
     expect(joined.accounts.map((item) => item.secret).sort()).toEqual([account.secret, otherAccount.secret].sort());
     const deleted = reconcileSyncAccounts(joined.state, [account], []);
     expect(deleted.accounts).toEqual([account]);
   });
 
-  test('preserves a larger local HOTP counter while adopting the existing remote ID', () => {
+  test('preserves a larger local HOTP counter without mutating remote records', async () => {
     const remote = { ...record, account: { ...account, type: 'hotp' as const, counter: 5 } };
     const local = { ...remote.account, id: 'z-local', counter: 20 };
     const before = structuredClone(remote);
-    const { accounts: aligned } = joinSyncAccounts(state([remote], DEVICE_B), [local]);
-    expect(aligned).toEqual([{ ...remote.account, counter: 20 }]);
+    const { accounts: aligned } = await joinSyncAccounts(state([remote], DEVICE_B), [local]);
+    expect(aligned).toEqual([{ ...remote.account, id: expect.any(String), counter: 20 }]);
     expect(remote).toEqual(before);
   });
 
-  test('does not revive a previously deleted account on a device joining with an old backup', () => {
-    expect(joinSyncAccounts(state([{ ...record, account: null }]), [account]).accounts).toEqual([]);
+  test('distinguishes deleted copies from independently changed credentials when joining', async () => {
+    const synced = await withSyncOrigin(record);
+    const deleted = state([{ ...synced, account: null }]);
+    expect((await joinSyncAccounts(deleted, [account])).accounts).toEqual([]);
+    const changed = { ...account, secret: 'KRUGS4ZANFZSAYJA' };
+    expect((await joinSyncAccounts(deleted, [changed])).accounts).toEqual([{ ...changed, id: expect.any(String) }]);
   });
 
-  test('adopts a known merged identity and respects its deletion even after a local rename', () => {
-    const remote = { ...record, mergedIds: ['old-copy'] };
+  test('adopts a known merged identity and respects its deletion even after a local rename', async () => {
+    const remote = await withSyncOrigin({ ...record, mergedIds: ['old-copy'] });
     const local = { ...account, id: 'old-copy', label: 'Local rename', sortOrder: 3 };
-    expect(joinSyncAccounts(state([remote]), [local]).accounts).toEqual([{ ...account, sortOrder: 3 }]);
-    expect(joinSyncAccounts(state([{ ...remote, account: null }]), [local]).accounts).toEqual([]);
+    expect((await joinSyncAccounts(state([remote]), [local])).accounts).toEqual([{ ...account, sortOrder: 3 }]);
+    const deleted = { ...remote, account: null };
+    expect((await joinSyncAccounts(state([deleted]), [local])).accounts).toEqual([]);
   });
 
-  test('a deleted restoration cannot hide a live restoration that shares an earlier copy', () => {
+  test('a deleted restoration cannot hide a live restoration that shares an earlier copy', async () => {
     const hotp = { ...account, id: 'a-live', type: 'hotp' as const, counter: 5 };
     const live = { ...record, id: hotp.id, account: hotp, restorationId: hotp.id, mergedIds: ['old-copy'] };
     const deleted = { ...record, id: 'z-deleted', account: null, restorationId: 'z-deleted', mergedIds: ['old-copy', hotp.id] };
     for (const id of ['old-copy', hotp.id]) {
       const local = { ...hotp, id, counter: 100, sortOrder: 3 };
-      expect(joinSyncAccounts(state([live, deleted]), [local]).accounts).toEqual([{ ...hotp, counter: 100, sortOrder: 3 }]);
+      expect((await joinSyncAccounts(state([live, deleted]), [local])).accounts).toEqual([{ ...hotp, counter: 100, sortOrder: 3 }]);
     }
   });
 });
