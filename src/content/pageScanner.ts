@@ -1,3 +1,5 @@
+import { resolvePageScanGesture } from '../lib/auth/pageScanSelection';
+
 let overlay: HTMLDivElement | null = null;
 let selection: HTMLDivElement | null = null;
 let startX = 0;
@@ -5,19 +7,6 @@ let startY = 0;
 let activePointerId: number | null = null;
 
 const scannerEventOptions = { capture: true, passive: false };
-
-interface CaptureRect {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-  devicePixelRatio: number;
-}
-
-interface MessageResponse {
-  ok: boolean;
-  error?: string;
-}
 
 const pageScannerWindow = window as Window & { __twofaPageScannerInstalled?: boolean };
 
@@ -29,23 +18,14 @@ if (!pageScannerWindow.__twofaPageScannerInstalled) {
 function handleMessage(
   message: unknown,
   _sender: chrome.runtime.MessageSender,
-  sendResponse: (response: MessageResponse) => void
+  sendResponse: (response: { ok: boolean }) => void
 ) {
-  const payload = message as { type?: unknown; dataUrl?: unknown; rect?: unknown; message?: unknown };
+  const payload = message as { type?: unknown; message?: unknown };
 
   if (payload.type === 'page-scan:start') {
     showOverlay();
     sendResponse({ ok: true });
     return undefined;
-  }
-
-  if (payload.type === 'page-scan:screenshot') {
-    if (typeof payload.dataUrl !== 'string' || !isCaptureRect(payload.rect)) {
-      sendResponse({ ok: false, error: 'Page scan failed.' });
-      return undefined;
-    }
-    respond(sendResponse, cropScreenshot(payload.dataUrl, payload.rect));
-    return true;
   }
 
   if (payload.type === 'page-scan:result') {
@@ -135,11 +115,16 @@ function finishSelection(event: PointerEvent): void {
     return;
   }
 
-  const rect = getRect(event.clientX, event.clientY);
+  const rect = resolvePageScanGesture(
+    { x: startX, y: startY },
+    { x: event.clientX, y: event.clientY },
+    { width: window.innerWidth, height: window.innerHeight },
+    window.devicePixelRatio
+  );
   suppressNextClick();
   removeOverlay();
 
-  if (rect.width < 12 || rect.height < 12) {
+  if (!rect) {
     reportFailure('No scan area was selected.');
     return;
   }
@@ -172,62 +157,13 @@ function drawSelection(currentX: number, currentY: number): void {
   selection.style.height = `${rect.height}px`;
 }
 
-function getRect(currentX: number, currentY: number): CaptureRect {
+function getRect(currentX: number, currentY: number) {
   return {
     left: Math.min(startX, currentX),
     top: Math.min(startY, currentY),
     width: Math.abs(currentX - startX),
-    height: Math.abs(currentY - startY),
-    devicePixelRatio: window.devicePixelRatio || 1
+    height: Math.abs(currentY - startY)
   };
-}
-
-function isCaptureRect(value: unknown): value is CaptureRect {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-
-  const rect = value as Partial<Record<keyof CaptureRect, unknown>>;
-  return (
-    isFiniteNumber(rect.left) &&
-    isFiniteNumber(rect.top) &&
-    isFiniteNumber(rect.width) &&
-    isFiniteNumber(rect.height) &&
-    isFiniteNumber(rect.devicePixelRatio)
-  );
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
-
-async function cropScreenshot(dataUrl: string, rect: CaptureRect): Promise<void> {
-  const image = new Image();
-  image.src = dataUrl;
-  await image.decode();
-
-  const canvas = document.createElement('canvas');
-  const scale = rect.devicePixelRatio || 1;
-  canvas.width = Math.max(1, Math.round(rect.width * scale));
-  canvas.height = Math.max(1, Math.round(rect.height * scale));
-  const context = canvas.getContext('2d');
-  if (!context) {
-    throw new Error('Unable to read the selected page area.');
-  }
-
-  context.drawImage(
-    image,
-    rect.left * scale,
-    rect.top * scale,
-    rect.width * scale,
-    rect.height * scale,
-    0,
-    0,
-    canvas.width,
-    canvas.height
-  );
-
-  sendRuntimeMessage({ type: 'page-scan:image', dataUrl: canvas.toDataURL('image/png') });
 }
 
 function removeOverlay(): void {
@@ -272,16 +208,6 @@ function suppressNextClick(): void {
 
   window.addEventListener('click', stopClick, { capture: true, passive: false, once: true });
   window.setTimeout(() => window.removeEventListener('click', stopClick, true), 500);
-}
-
-function respond(sendResponse: (response: MessageResponse) => void, action: Promise<void>): void {
-  action
-    .then(() => sendResponse({ ok: true }))
-    .catch((error) => {
-      const message = error instanceof Error ? error.message : 'Page scan failed.';
-      reportFailure(message);
-      sendResponse({ ok: false, error: message });
-    });
 }
 
 function reportFailure(message: string): void {

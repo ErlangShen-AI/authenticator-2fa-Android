@@ -1,17 +1,10 @@
-import { decodeQrDataUrlInWorker } from './lib/auth/qrWorker';
+import { decodeQrDataUrlInWorker, isPageScanCaptureRect } from './lib/auth/qrWorker';
 import type { PageContext } from './lib/auth/accountRanking';
+import type { PageScanCaptureRect } from './lib/auth/pageScanSelection';
 import { getImportResultMessage, importTextIntoStoredVault } from './lib/auth/vaultImport';
 import { installBrowserSyncCleanup } from './lib/auth/browserSyncCleanup';
 
 installBrowserSyncCleanup();
-
-interface CaptureRect {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-  devicePixelRatio: number;
-}
 
 interface MessageResponse {
   ok: boolean;
@@ -42,11 +35,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       captureSelection(sender.tab?.windowId, sender.tab?.id, message.rect),
       sender.tab?.id
     );
-    return true;
-  }
-
-  if (message?.type === 'page-scan:image') {
-    respond(sendResponse, completePageScan(sender.tab?.id, message.dataUrl), sender.tab?.id);
     return true;
   }
 
@@ -143,12 +131,12 @@ async function captureSelection(
   tabId: number | undefined,
   rect: unknown
 ): Promise<void> {
-  if (!tabId || !isCaptureRect(rect)) {
+  if (tabId === undefined || !isPageScanCaptureRect(rect)) {
     throw new Error('No scan area was selected.');
   }
 
   const dataUrl = await captureVisibleTab(windowId);
-  await sendTabMessage(tabId, { type: 'page-scan:screenshot', dataUrl, rect });
+  await completePageScan(tabId, dataUrl, rect);
 }
 
 function respond(
@@ -171,12 +159,12 @@ function respond(
     });
 }
 
-async function completePageScan(tabId: number | undefined, dataUrl: unknown): Promise<void> {
-  if (tabId === undefined || typeof dataUrl !== 'string') {
-    throw new Error('Page scan failed.');
-  }
-
-  const text = await decodeQrDataUrlInWorker(dataUrl);
+async function completePageScan(
+  tabId: number,
+  dataUrl: string,
+  rect: PageScanCaptureRect
+): Promise<void> {
+  const text = await decodeQrDataUrlInWorker(dataUrl, rect);
   const result = await importTextIntoStoredVault(text);
   const message = getImportResultMessage(result);
   await alertPageScanResult(tabId, message);
@@ -274,25 +262,6 @@ function settleChromeCallback(resolve: () => void, reject: (error: Error) => voi
   } else {
     resolve();
   }
-}
-
-function isCaptureRect(value: unknown): value is CaptureRect {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-
-  const rect = value as Partial<Record<keyof CaptureRect, unknown>>;
-  return (
-    isFiniteNumber(rect.left) &&
-    isFiniteNumber(rect.top) &&
-    isFiniteNumber(rect.width) &&
-    isFiniteNumber(rect.height) &&
-    isFiniteNumber(rect.devicePixelRatio)
-  );
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
 }
 
 function isRestrictedPage(url: string | undefined): boolean {

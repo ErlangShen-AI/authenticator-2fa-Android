@@ -92,6 +92,97 @@ describe('decodeQrImageData', () => {
     expect(decoded).toBe(payload);
   });
 
+  test('selects the nearest QR boundary when several codes are visible', async () => {
+    const leftPayload =
+      'otpauth://totp/Left:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Left';
+    const rightPayload =
+      'otpauth://totp/Right:user@example.com?secret=KRSXG5DSNFXGOIDB&issuer=Right';
+    const [leftQr, rightQr] = await Promise.all(
+      [leftPayload, rightPayload].map((payload) =>
+        toBuffer(payload, { errorCorrectionLevel: 'M', margin: 2, scale: 6, type: 'png' })
+      )
+    );
+    const rotatedLeftQr = await sharp(leftQr)
+      .rotate(45, { background: '#f8f8f8' })
+      .png()
+      .toBuffer();
+    const [leftMetadata, rightMetadata] = await Promise.all([
+      sharp(rotatedLeftQr).metadata(),
+      sharp(rightQr).metadata()
+    ]);
+    const leftWidth = leftMetadata.width ?? 0;
+    const leftHeight = leftMetadata.height ?? 0;
+    const rightWidth = rightMetadata.width ?? 0;
+    const rightHeight = rightMetadata.height ?? 0;
+    const left = 24;
+    const top = 24;
+    // The image bounds overlap, but the QR shapes do not. The right-hand click is
+    // inside the rotated QR's bounding box while still nearer the right QR's edge.
+    const right = left + leftWidth - 22;
+    const rightTop = top + leftHeight - rightHeight;
+    const { data, info } = await sharp({
+      create: {
+        width: right + rightWidth + 24,
+        height: top + leftHeight + 24,
+        channels: 4,
+        background: '#f8f8f8'
+      }
+    })
+      .composite([
+        { input: rotatedLeftQr, left, top },
+        { input: rightQr, left: right, top: rightTop }
+      ])
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const imageData = { data, width: info.width, height: info.height };
+
+    await expect(
+      decodeQrImageData(imageData, { x: left + leftWidth / 2, y: top + leftHeight / 2 })
+    ).resolves.toBe(leftPayload);
+    await expect(
+      decodeQrImageData(imageData, { x: right - 6, y: rightTop + rightHeight / 2 })
+    ).resolves.toBe(rightPayload);
+  });
+
+  test('keeps the focused QR when more than eight codes are visible', async () => {
+    const payloads = Array.from(
+      { length: 12 },
+      (_, index) =>
+        `otpauth://totp/u${String(index).padStart(2, '0')}?secret=JBSWY3DPEHPK3PXP`
+    );
+    const qrs = await Promise.all(
+      payloads.map((payload) =>
+        toBuffer(payload, { errorCorrectionLevel: 'L', margin: 1, scale: 2, type: 'png' })
+      )
+    );
+    const qrSide = (await sharp(qrs[0]).metadata()).width ?? 0;
+    const columns = 4;
+    const gap = 14;
+    const focusedIndex = 9;
+    const focus = { x: 256, y: 256 };
+    const step = qrSide + gap;
+    const originLeft = focus.x - qrSide / 2 - (focusedIndex % columns) * step;
+    const originTop = focus.y - qrSide / 2 - Math.floor(focusedIndex / columns) * step;
+    const { data, info } = await sharp({
+      create: { width: 512, height: 512, channels: 4, background: '#fff' }
+    })
+      .composite(
+        qrs.map((input, index) => ({
+          input,
+          left: originLeft + (index % columns) * step,
+          top: originTop + Math.floor(index / columns) * step
+        }))
+      )
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    await expect(
+      decodeQrImageData({ data, width: info.width, height: info.height }, focus)
+    ).resolves.toBe(payloads[focusedIndex]);
+  });
+
   test('imports non-block-aligned Base32 secrets with or without padding', async () => {
     const unpaddedSecret = 'J3WWIV3PTGJPQV5QAICM';
 
