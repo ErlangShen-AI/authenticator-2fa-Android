@@ -6,6 +6,11 @@ interface AutoScrollInput {
   maxScrollTop: number;
 }
 
+/** Cached drag positions are usable only while the source order is unchanged. */
+export function isReorderCurrent(accounts: readonly { id: string }[], sourceIds: readonly string[]): boolean {
+  return accounts.length === sourceIds.length && accounts.every((account, index) => account.id === sourceIds[index]);
+}
+
 export function getAutoScrollVelocity(
   { pointerY, top, bottom, scrollTop, maxScrollTop }: AutoScrollInput,
   threshold = 56,

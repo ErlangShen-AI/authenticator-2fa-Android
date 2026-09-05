@@ -1,11 +1,27 @@
 import { describe, expect, test } from 'vitest';
 import {
   getAutoScrollVelocity,
+  isReorderCurrent,
   moveItem,
   rubberbandOffset
 } from '../../src/lib/components/auth/reorder';
 
 describe('account reorder motion', () => {
+  test('keeps refreshed drag positions only when the same accounts remain in the same order', () => {
+    const source = ['a', 'b', 'c', 'd'];
+    const accounts = (ids: string[]) => ids.map((id) => ({ id, label: `${id} updated`, counter: 10 }));
+
+    expect(isReorderCurrent(accounts(source), source)).toBe(true);
+    for (const changed of [
+      ['b', 'c', 'd'],
+      ['a', 'b', 'c', 'd', 'e'],
+      ['a', 'b-copy', 'c', 'd'],
+      ['a', 'c', 'b', 'd']
+    ]) {
+      expect(isReorderCurrent(accounts(changed), source)).toBe(false);
+    }
+  });
+
   test('returns frame-rate-independent auto-scroll velocity near an available edge', () => {
     expect(
       getAutoScrollVelocity({

@@ -9,8 +9,6 @@ import {
   parseSyncRecoveryKey,
   reconcileSyncAccounts,
   validateSyncMarker,
-  withSyncOrigin,
-  withSyncOrigins,
   type BrowserSyncRecord,
   type BrowserSyncState
 } from './browserSync';
@@ -40,18 +38,15 @@ export async function connectBrowserSync(
   }
   const records = await readRecords(recoveryKey, items);
   // Merged counters need a durable local revision before any contributing slot changes.
-  const { state } = reconcileSyncAccounts({ recoveryKey, deviceId: crypto.randomUUID(), records: {} }, [], records);
+  const { state } = await reconcileSyncAccounts({ recoveryKey, deviceId: crypto.randomUUID(), records: {} }, [], records);
   return joinSyncAccounts(state, localAccounts, newGroup);
 }
 
 /** The caller commits state/accounts locally before publishing, making retries durable. */
 export async function prepareBrowserSync(state: BrowserSyncState, accounts: AuthenticatorAccount[]) {
   const items = await readBrowserSyncItems();
-  const records = await readRecords(state.recoveryKey, items, Object.values(state.records));
-  const next = reconcileSyncAccounts(state, accounts, records);
-  const enriched = await Promise.all(Object.values(next.state.records).map(withSyncOrigin));
-  next.state.records = Object.fromEntries(enriched.map((record) => [record.id, record]));
-  next.writes = enriched.filter((record) => record.deviceId === state.deviceId);
+  const records = await readRecords(state.recoveryKey, items);
+  const next = await reconcileSyncAccounts(state, accounts, records);
   const updates: Record<string, unknown> = {};
   for (const record of next.writes) {
     // Match the plaintext first to avoid fresh IVs and needless writes on every check.
@@ -84,16 +79,14 @@ export async function deleteBrowserSyncGroup(recoveryKey: string): Promise<void>
 
 async function readRecords(
   recoveryKey: string,
-  items: Record<string, unknown>,
-  known: BrowserSyncRecord[] = []
+  items: Record<string, unknown>
 ): Promise<BrowserSyncRecord[]> {
   const markerKey = await readMarker(recoveryKey, items);
   try {
     const prefix = `${SYNC_PREFIX}${await getSyncNamespace(recoveryKey)}:`;
-    const records = await Promise.all(Object.entries(items)
+    return await Promise.all(Object.entries(items)
       .filter(([key]) => key.startsWith(prefix) && key !== markerKey)
       .map(([key, value]) => decryptSyncRecord(recoveryKey, key, value)));
-    return await withSyncOrigins(records, known);
   } catch {
     throw new BrowserSyncError('invalidData');
   }

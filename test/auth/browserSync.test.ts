@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   joinSyncAccounts,
   withSyncOrigin,
+  withSyncOrigins,
   createSyncMarker,
   decryptSyncRecord,
   encryptSyncRecord,
@@ -70,12 +71,17 @@ describe('Browser Sync encryption', () => {
   test('authenticates duplicate identities and stores them in a canonical form', async () => {
     const key = generateSyncRecoveryKey();
     const item = await encryptSyncRecord(key, { ...record, mergedIds: ['z', 'a', 'z', record.id] });
-    expect(await decryptSyncRecord(key, item.storageKey, item.value)).toEqual(await withSyncOrigin({ ...record, mergedIds: ['a', 'z'] }));
+    const canonical = await withSyncOrigin({ ...record, mergedIds: ['a', 'z'] });
+    expect(await decryptSyncRecord(key, item.storageKey, item.value)).toEqual(canonical);
     const deleted = await encryptSyncRecord(key, { ...record, account: null, mergedIds: ['z', 'a'] });
-    expect(await decryptSyncRecord(key, deleted.storageKey, deleted.value)).toEqual({ ...record, account: null, mergedIds: ['a', 'z'] });
-    const restored = { ...record, mergedIds: ['old-copy'], restorationId: record.id };
+    const tombstone = await decryptSyncRecord(key, deleted.storageKey, deleted.value);
+    expect(tombstone).toEqual({ ...record, account: null, mergedIds: ['a', 'z'] });
+    expect((await withSyncOrigins([tombstone], [canonical]))[0].origins).toEqual(canonical.origins);
+    const restored = await withSyncOrigin({ ...record, mergedIds: ['old-copy'], restorationId: record.id });
     const restoration = await encryptSyncRecord(key, restored);
-    expect(await decryptSyncRecord(key, restoration.storageKey, restoration.value)).toEqual(await withSyncOrigin(restored));
+    expect(await decryptSyncRecord(key, restoration.storageKey, restoration.value)).toEqual(restored);
+    const restoredDeletion = await encryptSyncRecord(key, { ...restored, account: null });
+    expect(await decryptSyncRecord(key, restoredDeletion.storageKey, restoredDeletion.value)).toEqual({ ...restored, account: null });
   });
 
   test('rejects wrong keys, tampering, and ciphertext moved to a different slot', async () => {
@@ -132,7 +138,11 @@ describe('Browser Sync encryption', () => {
       { ...record, origins: [null] },
       { ...record, origins: ['not-a-fingerprint'] },
       { ...record, restorationId: null },
-      { ...record, restorationId: 'another-identity' }
+      { ...record, restorationId: 'another-identity' },
+      { ...record, restorationOrigin: 'a'.repeat(64) },
+      { ...record, restorationId: record.id, restorationOrigin: null },
+      { ...record, restorationId: record.id, restorationOrigin: 'not-a-fingerprint' },
+      { ...record, restorationId: record.id, restorationOrigin: 'a'.repeat(64), origins: ['b'.repeat(64)] }
     ];
     for (const payload of invalidPayloads) {
       const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -156,114 +166,126 @@ describe('Browser Sync encryption', () => {
 });
 
 describe('Browser Sync reconciliation', () => {
-  test('conserves HOTP counters through overlapping duplicate sets on three devices', () => {
+  test('conserves HOTP counters through overlapping duplicate sets on three devices', async () => {
     const copies = ['a', 'b', 'c'].map((id, index) => ({
       ...record, id, account: { ...account, id, type: 'hotp' as const, counter: index === 2 ? 100 : 1 }
     }));
-    const left = reconcileSyncAccounts(state(), copies.slice(0, 2).map((value) => value.account), []);
-    const right = reconcileSyncAccounts(state([], DEVICE_B), copies.slice(1).map((value) => value.account), []);
-    const merged = reconcileSyncAccounts(left.state, left.accounts, right.writes);
+    const left = await reconcileSyncAccounts(state(), copies.slice(0, 2).map((value) => value.account), []);
+    const right = await reconcileSyncAccounts(state([], DEVICE_B), copies.slice(1).map((value) => value.account), []);
+    const merged = await reconcileSyncAccounts(left.state, left.accounts, right.writes);
     expect(merged.accounts).toHaveLength(1);
     expect(merged.accounts[0]).toMatchObject({ id: 'a', counter: 100 });
     expect(merged.state.records.a).toMatchObject({ mergedIds: ['b', 'c'] });
     expect(merged.writes[0].account?.counter).toBe(100);
     expect(mergeSyncRecords([...left.writes, ...right.writes])).toEqual(mergeSyncRecords([...right.writes, ...left.writes]));
-    expect(reconcileSyncAccounts(right.state, right.accounts, merged.writes).accounts[0]).toMatchObject({ id: 'a', counter: 100 });
+    expect((await reconcileSyncAccounts(right.state, right.accounts, merged.writes)).accounts[0]).toMatchObject({ id: 'a', counter: 100 });
   });
 
-  test('retains duplicate identity links when either copy is later deleted', () => {
+  test('retains duplicate identity links when either copy is later deleted', async () => {
     const copies = ['a', 'b'].map((id) => ({ ...account, id }));
-    const joined = reconcileSyncAccounts(state(), copies, []);
-    const deleted = reconcileSyncAccounts(joined.state, [], []);
+    const local = await reconcileSyncAccounts(state(), [copies[1]], []);
+    const joined = await reconcileSyncAccounts(local.state, local.accounts, [{
+      ...record, id: copies[0].id, deviceId: DEVICE_B, account: copies[0]
+    }]);
+    const deleted = await reconcileSyncAccounts(joined.state, [], []);
     const stale = { ...record, id: 'b', revision: 100, account: { ...copies[1], label: 'Offline edit' } };
-    expect(reconcileSyncAccounts(deleted.state, [], [stale]).accounts).toEqual([]);
-    expect(reconcileSyncAccounts(joined.state, joined.accounts, [{ ...stale, account: null }]).accounts).toEqual([]);
+    expect((await reconcileSyncAccounts(deleted.state, [], [stale])).accounts).toEqual([]);
+    expect((await reconcileSyncAccounts(joined.state, joined.accounts, [{ ...stale, account: null }])).accounts).toEqual([]);
+    expect((await joinSyncAccounts(deleted.state, joined.accounts)).accounts).toEqual([]);
   });
 
-  test('keeps merged identities after editing account details and retrying with stale copies', () => {
+  test('keeps merged identities after editing account details and retrying with stale copies', async () => {
     const copies = ['a', 'b'].map((id) => ({ ...account, id }));
-    const joined = reconcileSyncAccounts(state(), copies, []);
-    const edited = reconcileSyncAccounts(joined.state, [{ ...joined.accounts[0], label: 'Renamed' }], []);
+    const joined = await reconcileSyncAccounts(state(), copies, []);
+    // Older devices can replace credentials without rotating their account ID.
+    const legacy = await reconcileSyncAccounts(joined.state, joined.accounts, [{
+      ...record, id: 'a', revision: 10, account: { ...copies[0], secret: 'KRUGS4ZANFZSAYJA' }
+    }]);
+    const edited = await reconcileSyncAccounts(legacy.state, [{ ...legacy.accounts[0], label: 'Renamed' }], []);
     const stale = { ...record, id: 'b', account: copies[1] };
     expect(edited.state.records.a.mergedIds).toEqual(['b']);
-    expect(reconcileSyncAccounts(edited.state, edited.accounts, [stale])).toEqual(edited);
+    expect(edited.state.records.a.origins).toEqual(legacy.state.records.a.origins);
+    expect(await reconcileSyncAccounts(edited.state, edited.accounts, [stale])).toEqual(edited);
   });
 
-  test('adding an account again survives older duplicate records and their tombstone', () => {
+  test('adding an account again survives older duplicate records and their tombstone', async () => {
     const copies = ['a', 'b'].map((id) => ({ ...account, id }));
-    const joined = reconcileSyncAccounts(state(), copies, []);
-    const deleted = reconcileSyncAccounts(joined.state, [], []);
+    const joined = await reconcileSyncAccounts(state(), copies, []);
+    const deleted = await reconcileSyncAccounts(joined.state, [], []);
     const restored = { ...account, id: 'restored' };
-    const result = reconcileSyncAccounts(deleted.state, [restored], [{ ...record, id: 'b', account: copies[1] }]);
+    const result = await reconcileSyncAccounts(deleted.state, [restored], [{ ...record, id: 'b', account: copies[1] }]);
     expect(result.accounts).toEqual([restored]);
   });
 
-  test('a restore survives an old live copy followed by its delayed tombstone', () => {
+  test('a restore survives an old live copy followed by its delayed tombstone', async () => {
     const original = { ...record, id: 'a', account: { ...account, id: 'a' } };
     const restored = { ...account, id: 'restored' };
-    const imported = reconcileSyncAccounts(state(), [restored], [], [restored.id]);
-    const delivered = reconcileSyncAccounts(imported.state, imported.accounts, [original]);
+    const imported = await reconcileSyncAccounts(state(), [restored], [], [restored.id]);
+    const delivered = await reconcileSyncAccounts(imported.state, imported.accounts, [original]);
     expect(delivered.accounts).toEqual([restored]);
     expect(delivered.state.records[restored.id]).toMatchObject({ restorationId: restored.id, mergedIds: [original.id] });
-    const deleted = reconcileSyncAccounts(delivered.state, delivered.accounts, [{ ...original, account: null }]);
+    const deleted = await reconcileSyncAccounts(delivered.state, delivered.accounts, [{ ...original, account: null }]);
     expect(deleted.accounts).toEqual([restored]);
-    expect(reconcileSyncAccounts(deleted.state, deleted.accounts, [original])).toEqual(deleted);
+    expect(await reconcileSyncAccounts(deleted.state, deleted.accounts, [original])).toEqual(deleted);
   });
 
-  test('joining copies converge on a restored identity and later deletion suppresses stale originals', () => {
+  test('joining copies converge on a restored identity and later deletion suppresses stale originals', async () => {
     const restored = { ...account, id: 'restored' };
-    const imported = reconcileSyncAccounts(state(), [restored], [], [restored.id]);
+    const imported = await reconcileSyncAccounts(state(), [restored], [], [restored.id]);
     const copy = { ...account, id: 'joining-copy' };
-    const joined = reconcileSyncAccounts(state([], DEVICE_B), [copy], []);
-    const adopted = reconcileSyncAccounts(joined.state, joined.accounts, imported.writes);
+    const joined = await reconcileSyncAccounts(state([], DEVICE_B), [copy], []);
+    const adopted = await reconcileSyncAccounts(joined.state, joined.accounts, imported.writes);
     expect(adopted.accounts.map((value) => value.id)).toEqual([restored.id]);
-    const renamed = reconcileSyncAccounts(adopted.state, [{ ...adopted.accounts[0], label: 'Renamed' }], []);
+    const renamed = await reconcileSyncAccounts(adopted.state, [{ ...adopted.accounts[0], label: 'Renamed' }], []);
     expect(renamed.state.records[restored.id].restorationId).toBe(restored.id);
-    const deleted = reconcileSyncAccounts(renamed.state, [], []);
+    const deleted = await reconcileSyncAccounts(renamed.state, [], []);
     expect(deleted.state.records[restored.id]).toMatchObject({ restorationId: restored.id, account: null });
-    expect(reconcileSyncAccounts(imported.state, imported.accounts, [...joined.writes, ...deleted.writes]).accounts).toEqual([]);
+    expect((await reconcileSyncAccounts(imported.state, imported.accounts, [...joined.writes, ...deleted.writes])).accounts).toEqual([]);
   });
 
-  test('retains late old alias chains without transferring their deletion into a restore', () => {
+  test('retains late old alias chains without transferring their deletion into a restore', async () => {
     const restored = { ...account, id: 'restored' };
-    const imported = reconcileSyncAccounts(state(), [restored], [], [restored.id]);
+    const imported = await reconcileSyncAccounts(state(), [restored], [], [restored.id]);
     const copy = { ...record, id: 'b', account: { ...account, id: 'b' } };
-    const adopted = reconcileSyncAccounts(imported.state, imported.accounts, [copy]);
+    const adopted = await reconcileSyncAccounts(imported.state, imported.accounts, [copy]);
     const oldDeletion = { ...copy, id: 'a', account: null, mergedIds: ['b'] };
-    const delivered = reconcileSyncAccounts(adopted.state, adopted.accounts, [oldDeletion]);
+    const delivered = await reconcileSyncAccounts(adopted.state, adopted.accounts, [oldDeletion]);
     expect(delivered.accounts).toEqual([restored]);
     expect(delivered.state.records[restored.id].mergedIds).toEqual(['a', 'b']);
-    expect(reconcileSyncAccounts(delivered.state, delivered.accounts, [{ ...copy, id: 'a', account: { ...copy.account, id: 'a' } }])).toEqual(delivered);
+    const stale = { ...copy, id: 'a', account: { ...copy.account, id: 'a' } };
+    const repeated = await reconcileSyncAccounts(delivered.state, delivered.accounts, [stale]);
+    expect(repeated.accounts).toEqual([restored]);
+    expect(await reconcileSyncAccounts(repeated.state, repeated.accounts, [stale])).toEqual(repeated);
   });
 
-  test('keeps explicit restore generations independent when an earlier generation is deleted', () => {
+  test('keeps explicit restore generations independent when an earlier generation is deleted', async () => {
     const copies = ['restore-a', 'restore-b'].map((id) => ({ ...account, id }));
-    const first = reconcileSyncAccounts(state(), [copies[0]], [], [copies[0].id]);
-    const second = reconcileSyncAccounts(state([], DEVICE_B), [copies[1]], [], [copies[1].id]);
-    const deleted = reconcileSyncAccounts(first.state, [], []);
-    const result = reconcileSyncAccounts(second.state, second.accounts, [...first.writes, ...deleted.writes]);
+    const first = await reconcileSyncAccounts(state(), [copies[0]], [], [copies[0].id]);
+    const second = await reconcileSyncAccounts(state([], DEVICE_B), [copies[1]], [], [copies[1].id]);
+    const deleted = await reconcileSyncAccounts(first.state, [], []);
+    const result = await reconcileSyncAccounts(second.state, second.accounts, [...first.writes, ...deleted.writes]);
     expect(result.accounts).toEqual([copies[1]]);
   });
 
-  test('keeps accounts with different secrets, names, or OTP settings distinct', () => {
+  test('keeps accounts with different secrets, names, or OTP settings distinct', async () => {
     const variants = [
       {}, { secret: 'KRUGS4ZANFZSAYJA' }, { issuer: 'Other' }, { label: 'Other' },
       { algorithm: 'SHA-256' as const }, { digits: 8 as const }, { period: 60 }, { type: 'hotp' as const }
     ].map((patch, index) => ({ ...account, ...patch, id: `copy-${index}` }));
-    expect(reconcileSyncAccounts(state(), variants, []).accounts).toEqual(variants);
+    expect((await reconcileSyncAccounts(state(), variants, [])).accounts).toEqual(variants);
   });
 
-  test('initial upload publishes local accounts; an unseen remote account is never deleted', () => {
+  test('initial upload publishes local accounts; an unseen remote account is never deleted', async () => {
     const local = createAccount({ label: 'Local', secret: account.secret });
-    const result = reconcileSyncAccounts(state(), [local], [record]);
+    const result = await reconcileSyncAccounts(state(), [local], [record]);
     expect(new Set(result.accounts.map((value) => value.id))).toEqual(new Set([local.id, account.id]));
     expect(result.writes).toHaveLength(2); // both records belong to this fixture's device
     expect(result.writes.every((value) => value.account !== null)).toBe(true);
   });
 
-  test('compares local edits to the applied baseline before merging incoming edits', () => {
+  test('compares local edits to the applied baseline before merging incoming edits', async () => {
     const remote = { ...record, revision: 2, deviceId: DEVICE_B, account: { ...account, label: 'Remote' } };
-    const result = reconcileSyncAccounts(state([record]), [{ ...account, label: 'Local' }], [remote]);
+    const result = await reconcileSyncAccounts(state([record]), [{ ...account, label: 'Local' }], [remote]);
     expect(result.accounts[0].label).toBe('Remote');
     expect(result.state.records[account.id].revision).toBe(2);
   });
@@ -278,32 +300,32 @@ describe('Browser Sync reconciliation', () => {
     expect(merged[0].account?.label).toBe('B');
   });
 
-  test('makes deletions permanent even after a stale offline edit has a higher revision', () => {
+  test('makes deletions permanent even after a stale offline edit has a higher revision', async () => {
     const deletion = { ...record, revision: 2, account: null };
     const offline = { ...record, revision: 100, deviceId: DEVICE_B, account: { ...account, label: 'Offline' } };
     expect(mergeSyncRecords([offline, deletion])[0]).toEqual(deletion);
-    const result = reconcileSyncAccounts(state([record]), [], [offline]);
+    const result = await reconcileSyncAccounts(state([record]), [], [offline]);
     expect(result.accounts).toEqual([]);
     expect(result.writes[0].account).toBeNull();
   });
 
-  test('retains tombstones after all remote account slots temporarily disappear', () => {
+  test('retains tombstones after all remote account slots temporarily disappear', async () => {
     const deletion = { ...record, revision: 2, account: null };
-    const result = reconcileSyncAccounts(state([deletion]), [], []);
+    const result = await reconcileSyncAccounts(state([deletion]), [], []);
     expect(result.state.records[account.id]).toEqual(deletion);
     expect(result.writes).toEqual([deletion]);
   });
 
-  test('retains local winners for retry after a failed upload and does not create extra revisions', () => {
-    const initial = reconcileSyncAccounts(state(), [account], []);
-    const retry = reconcileSyncAccounts(initial.state, initial.accounts, []);
+  test('retains local winners for retry after a failed upload and does not create extra revisions', async () => {
+    const initial = await reconcileSyncAccounts(state(), [account], []);
+    const retry = await reconcileSyncAccounts(initial.state, initial.accounts, []);
     expect(retry).toEqual(initial);
     expect(() => structuredClone(retry.state)).not.toThrow();
   });
 
   test('keeps ordering local and appends incoming accounts without generating reorder writes', async () => {
-    const initial = reconcileSyncAccounts(state(), [{ ...account, sortOrder: 7 }], []);
-    const reordered = reconcileSyncAccounts(initial.state, [{ ...account, sortOrder: 0 }], []);
+    const initial = await reconcileSyncAccounts(state(), [{ ...account, sortOrder: 7 }], []);
+    const reordered = await reconcileSyncAccounts(initial.state, [{ ...account, sortOrder: 0 }], []);
     expect(reordered.state).toEqual(initial.state);
     expect(reordered.writes).toEqual(initial.writes);
     expect(reordered.accounts[0].sortOrder).toBe(0);
@@ -313,29 +335,29 @@ describe('Browser Sync reconciliation', () => {
     expect(decrypted.account).not.toHaveProperty('sortOrder');
 
     const incoming = createAccount({ label: 'Incoming', secret: account.secret });
-    const merged = reconcileSyncAccounts(initial.state, initial.accounts, [{ ...record, id: incoming.id, account: incoming, deviceId: DEVICE_B }]);
+    const merged = await reconcileSyncAccounts(initial.state, initial.accounts, [{ ...record, id: incoming.id, account: incoming, deviceId: DEVICE_B }]);
     expect(merged.accounts.map((value) => value.sortOrder)).toEqual([7, 8]);
-    expect(reconcileSyncAccounts(merged.state, merged.accounts, []).state).toEqual(merged.state);
+    expect((await reconcileSyncAccounts(merged.state, merged.accounts, [])).state).toEqual(merged.state);
   });
 
-  test('preserves the largest HOTP counter through concurrent renames and emits a new local revision', () => {
+  test('preserves the largest HOTP counter through concurrent renames and emits a new local revision', async () => {
     const hotp = { ...account, type: 'hotp' as const, counter: 50 };
     const baseline = { ...record, account: hotp };
     const remote = { ...record, revision: 2, deviceId: DEVICE_B, account: { ...hotp, label: 'Renamed', counter: 20 } };
-    const result = reconcileSyncAccounts(state([baseline]), [hotp], [remote]);
+    const result = await reconcileSyncAccounts(state([baseline]), [hotp], [remote]);
     expect(result.accounts[0]).toMatchObject({ label: 'Renamed', counter: 50 });
     expect(result.writes[0]).toMatchObject({ revision: 3, deviceId: DEVICE_A });
-    const repeat = reconcileSyncAccounts(result.state, result.accounts, [baseline, remote]);
+    const repeat = await reconcileSyncAccounts(result.state, result.accounts, [baseline, remote]);
     expect(repeat).toEqual(result);
   });
 
-  test('republishes an older join baseline whose merged counter was never uploaded', () => {
+  test('republishes an older join baseline whose merged counter was never uploaded', async () => {
     const remote = { ...record, deviceId: DEVICE_B, account: { ...account, type: 'hotp' as const, counter: 1 } };
     const synthetic = { ...remote, account: { ...remote.account, counter: 100 } };
-    const repaired = reconcileSyncAccounts(state([synthetic]), [synthetic.account], [remote]);
+    const repaired = await reconcileSyncAccounts(state([synthetic]), [synthetic.account], [remote]);
     expect(repaired.writes).toHaveLength(1);
     expect(repaired.writes[0]).toMatchObject({ revision: 2, deviceId: DEVICE_A, account: { counter: 100 } });
-    expect(reconcileSyncAccounts(repaired.state, repaired.accounts, [remote])).toEqual(repaired);
+    expect(await reconcileSyncAccounts(repaired.state, repaired.accounts, [remote])).toEqual(repaired);
   });
 
   test('never carries a counter across a replacement secret or algorithm', () => {
@@ -346,20 +368,20 @@ describe('Browser Sync reconciliation', () => {
     }
   });
 
-  test('supports identifiers that are special JavaScript object property names', () => {
+  test('supports identifiers that are special JavaScript object property names', async () => {
     const special = { ...account, id: '__proto__' };
-    const result = reconcileSyncAccounts(state(), [special], []);
+    const result = await reconcileSyncAccounts(state(), [special], []);
     expect(Object.hasOwn(result.state.records, '__proto__')).toBe(true);
     expect(result.accounts).toEqual([special]);
-    expect(reconcileSyncAccounts(result.state, [], []).accounts).toEqual([]);
+    expect((await reconcileSyncAccounts(result.state, [], [])).accounts).toEqual([]);
   });
 
-  test('rejects revision overflow and duplicate local IDs without changing the baseline', () => {
+  test('rejects revision overflow and duplicate local IDs without changing the baseline', async () => {
     const exhausted = state([{ ...record, revision: Number.MAX_SAFE_INTEGER }]);
     const before = structuredClone(exhausted);
-    expect(() => reconcileSyncAccounts(exhausted, [], [])).toThrow();
+    await expect(reconcileSyncAccounts(exhausted, [], [])).rejects.toThrow();
     expect(exhausted).toEqual(before);
-    expect(() => reconcileSyncAccounts(state(), [account, account], [])).toThrow();
+    await expect(reconcileSyncAccounts(state(), [account, account], [])).rejects.toThrow();
   });
 });
 
@@ -381,7 +403,7 @@ describe('joining an existing Browser Sync group', () => {
     const joined = await joinSyncAccounts(state([original, other], DEVICE_B), [{ ...otherAccount, id: 'old-copy' }]);
 
     expect(joined.accounts.map((item) => item.secret).sort()).toEqual([account.secret, otherAccount.secret].sort());
-    const deleted = reconcileSyncAccounts(joined.state, [account], []);
+    const deleted = await reconcileSyncAccounts(joined.state, [account], []);
     expect(deleted.accounts).toEqual([account]);
   });
 

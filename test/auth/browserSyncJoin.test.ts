@@ -3,16 +3,70 @@ import {
   createSyncMarker,
   encryptSyncRecord,
   generateSyncRecoveryKey,
+  mergeSyncRecords,
+  withSyncOrigin,
   type BrowserSyncRecord
 } from '../../src/lib/auth/browserSync';
 import { connectBrowserSync, prepareBrowserSync } from '../../src/lib/auth/browserSyncSession';
 import { createAccount } from '../../src/lib/auth/otp';
+import { mergeImportedAccounts } from '../../src/lib/auth/vaultImport';
 import { createBrowserSyncNetwork } from '../helpers/browserSync';
 
 const DEVICE_A = '00000000-0000-4000-8000-000000000001';
 const DEVICE_B = '00000000-0000-4000-8000-000000000002';
 
 describe('Browser Sync joining', () => {
+  test.each([false, true])('a delayed account stays deleted by its joining backup (prepared before deletion: %s)', async (preparedFirst) => {
+    const network = createBrowserSyncNetwork();
+    network.createDevice().install();
+    const recoveryKey = generateSyncRecoveryKey();
+    const created = await connectBrowserSync(recoveryKey, false, []);
+    const added = await mergeImportedAccounts([], [createAccount({ label: 'Account', secret: 'JBSWY3DPEHPK3PXP' })], created.state);
+    const early = preparedFirst ? await prepareBrowserSync(added.browserSync!, added.accounts) : undefined;
+
+    const joined = await connectBrowserSync(recoveryKey, true, added.accounts);
+    const uploaded = await prepareBrowserSync(joined.state, joined.accounts);
+    await uploaded.publish();
+    const deleted = await prepareBrowserSync(uploaded.state, []);
+    await deleted.publish();
+    const delayed = early ?? await prepareBrowserSync(added.browserSync!, added.accounts);
+    if (!preparedFirst) expect(delayed.accounts).toEqual([]);
+    await delayed.publish();
+
+    const delivered = await prepareBrowserSync(deleted.state, []);
+    await delivered.publish();
+    expect(delivered.accounts).toEqual([]);
+    expect((await connectBrowserSync(recoveryKey, true, [])).accounts).toEqual([]);
+    const records = [...Object.values(delayed.state.records), ...Object.values(deleted.state.records)];
+    const merged = mergeSyncRecords(records);
+    expect(mergeSyncRecords([...records].reverse())).toEqual(merged);
+    expect(mergeSyncRecords([...merged, ...records])).toEqual(merged);
+  });
+
+  test.each([false, true])('a restored account protects its generation before first upload (old deletion has origins: %s)', async (hasOrigins) => {
+    const network = createBrowserSyncNetwork();
+    network.createDevice().install();
+    const recoveryKey = generateSyncRecoveryKey();
+    const original = createAccount({ label: 'Account', secret: 'JBSWY3DPEHPK3PXP' });
+    const created = await connectBrowserSync(recoveryKey, false, []);
+    const imported = await mergeImportedAccounts([], [original], created.state);
+    const old = await withSyncOrigin({ id: original.id, revision: 1, deviceId: DEVICE_A, account: original });
+    await seedRecords(network.cloud, recoveryKey, [old]);
+
+    const restored = await prepareBrowserSync(imported.browserSync!, imported.accounts);
+    await restored.publish();
+    await seedRecords(network.cloud, recoveryKey, [{
+      id: old.id, revision: 2, deviceId: old.deviceId, account: null,
+      ...(hasOrigins ? { origins: old.origins } : {})
+    }]);
+    const retained = await prepareBrowserSync(restored.state, restored.accounts);
+    expect(retained.accounts).toEqual(restored.accounts);
+    const deleted = await prepareBrowserSync(retained.state, []);
+    await deleted.publish();
+
+    expect((await connectBrowserSync(recoveryKey, true, restored.accounts)).accounts).toEqual([]);
+  });
+
   test('preserves independently changed credentials when their shared backup ID arrives after joining', async () => {
     const network = createBrowserSyncNetwork();
     network.createDevice().install();

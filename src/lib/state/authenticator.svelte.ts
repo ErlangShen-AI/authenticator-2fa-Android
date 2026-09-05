@@ -1,6 +1,6 @@
 import type {} from 'svelte';
 import type { BrowserSyncState } from '../auth/browserSync';
-import { accountOrigin, SYNC_PREFIX } from '../auth/browserSync';
+import { accountOrigin, reconcileSyncAccounts, SYNC_PREFIX } from '../auth/browserSync';
 import { connectBrowserSync, deleteBrowserSyncGroup, prepareBrowserSync } from '../auth/browserSyncSession';
 import { BrowserSyncError, browserSyncAvailable, type BrowserSyncErrorCode } from '../auth/browserSyncStorage';
 import { withVaultLock } from '../auth/vaultLock';
@@ -473,7 +473,13 @@ export class AuthenticatorVault {
 
     const accounts = [...this.accounts];
     accounts[index] = updateAccount(account, draft);
-    await this.persistData({ accounts, settings: this.settings }, 'Account updated.');
+    // A backup exported before upload must already identify replacement credentials.
+    const synced = this.browserSync ? await reconcileSyncAccounts(this.browserSync, accounts, []) : null;
+    await this.persistData(
+      { accounts: synced?.accounts ?? accounts, settings: this.settings },
+      'Account updated.',
+      synced?.state
+    );
     await this.refreshCodes();
   }
 
@@ -483,7 +489,7 @@ export class AuthenticatorVault {
       return { imported: 0, skipped: 0 };
     }
 
-    const merged = mergeImportedAccounts(
+    const merged = await mergeImportedAccounts(
       this.accounts,
       incoming,
       this.browserSync

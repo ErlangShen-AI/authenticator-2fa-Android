@@ -32,6 +32,7 @@
   } from './lib/components/auth/transitions';
   import {
     getAutoScrollVelocity as calculateAutoScrollVelocity,
+    isReorderCurrent,
     moveItem,
     rubberbandOffset
   } from './lib/components/auth/reorder';
@@ -102,6 +103,7 @@
   let dragState = $state.raw<AccountDragState | null>(null);
   let reorderSaving = $state(false);
   let keyboardDraggingAccountId = $state<string | null>(null);
+  let reorderSourceIds: string[] | null = null;
   let accountListElement = $state<HTMLUListElement | null>(null);
   let scrollContainerElement = $state<HTMLDivElement | null>(null);
   let activeDragHandle: HTMLElement | null = null;
@@ -210,6 +212,16 @@
         closeQr();
       });
     }
+  });
+
+  $effect.pre(() => {
+    const accounts = vault.sortedAccounts;
+    const disabled = reorderDisabled;
+    untrack(() => {
+      if (reorderSourceIds && (disabled || !isReorderCurrent(accounts, reorderSourceIds))) {
+        cleanupAccountDrag();
+      }
+    });
   });
 
   // Keep the browser popup frame on the same theme as the app surface.
@@ -641,6 +653,7 @@
         height: rect.height
       };
     });
+    reorderSourceIds = itemRects.map((item) => item.id);
 
     activeDragHandle = event.currentTarget as HTMLElement;
     activeDragHandle.setPointerCapture?.(event.pointerId);
@@ -700,11 +713,9 @@
         ? null
         : moveItem(vault.sortedAccounts, state.startIndex, state.currentIndex);
     if (accounts) {
-      dragAccounts = accounts;
-    }
-    cleanupPointerDrag();
-    if (accounts) {
       void commitAccountOrder(accounts);
+    } else {
+      cleanupAccountDrag();
     }
   }
 
@@ -712,13 +723,14 @@
     if (!dragState || event.pointerId !== dragState.pointerId) {
       return;
     }
-    cleanupPointerDrag();
+    cleanupAccountDrag();
   }
 
   function cleanupAccountDrag() {
     cleanupPointerDrag();
     keyboardDraggingAccountId = null;
     dragAccounts = null;
+    reorderSourceIds = null;
   }
 
   function cleanupPointerDrag() {
@@ -802,7 +814,8 @@
           void commitAccountOrder(accounts);
         }
       } else {
-        cleanupPointerDrag();
+        cleanupAccountDrag();
+        reorderSourceIds = vault.sortedAccounts.map((item) => item.id);
         keyboardDraggingAccountId = account.id;
         dragAccounts = orderedAccounts;
       }
@@ -812,8 +825,7 @@
     if (event.key === 'Escape' && keyboardDraggingAccountId === account.id) {
       event.preventDefault();
       event.stopPropagation();
-      keyboardDraggingAccountId = null;
-      dragAccounts = null;
+      cleanupAccountDrag();
       return;
     }
 
@@ -850,6 +862,9 @@
   }
 
   async function commitAccountOrder(accounts: AuthenticatorAccount[]) {
+    const current = reorderSourceIds && isReorderCurrent(vault.sortedAccounts, reorderSourceIds);
+    cleanupAccountDrag();
+    if (!current) return;
     dragAccounts = accounts;
     reorderSaving = true;
     try {

@@ -72,6 +72,61 @@ describe('Browser Sync vault integration', () => {
     expect(first.accounts).toEqual([expect.objectContaining({ id: originalId, secret: SECRET })]);
   });
 
+  test('an offline credential edit keeps the identity deleted by its joining backup', async () => {
+    const network = createBrowserSyncNetwork();
+    const firstDevice = network.createDevice();
+    const first = await createProtectedVault(firstDevice, ['Alice']);
+    const recoveryKey = generateSyncRecoveryKey();
+    await first.startBrowserSync(recoveryKey, false);
+    const original = first.accounts[0];
+    firstDevice.sync.readError = 'Offline';
+    const replacement = 'KRUGS4ZANFZSAYJA';
+    await first.updateAccount(original, { secret: replacement });
+    expect(first.accounts[0].id).not.toBe(original.id);
+    await first.syncNow();
+    expect(first.syncStatus).toBe('pending');
+    const backup = JSON.stringify({ accounts: first.accounts });
+
+    const secondDevice = network.createDevice();
+    const second = await createProtectedVault(secondDevice);
+    await second.importText(backup);
+    await second.startBrowserSync(recoveryKey, true);
+    await second.deleteAccount(second.accounts.find((account) => account.secret === replacement)!);
+    await second.syncNow();
+
+    firstDevice.install();
+    firstDevice.sync.readError = '';
+    await first.syncNow();
+    expect(first.accounts).toEqual([]);
+    secondDevice.install();
+    await second.syncNow();
+    expect(second.accounts).toEqual([]);
+  });
+
+  test.each(['edits', 'additions'])('an unpublished account stays deleted after further local %s', async (kind) => {
+    const network = createBrowserSyncNetwork();
+    const device = network.createDevice();
+    const first = await createProtectedVault(device, kind === 'edits' ? ['Alice'] : []);
+    const recoveryKey = generateSyncRecoveryKey();
+    await first.startBrowserSync(recoveryKey, false);
+    device.sync.readError = 'Offline';
+    const removedSecret = 'KRUGS4ZANFZSAYJA';
+    const change = (secret: string) => kind === 'edits'
+      ? first.updateAccount(first.accounts[0], { secret })
+      : first.addAccount({ label: 'Alice', secret });
+    await change(removedSecret);
+    const backup = JSON.stringify({ accounts: first.accounts });
+    if (kind === 'additions') await first.deleteAccount(first.accounts[0]);
+    await change(SECRET);
+    device.sync.readError = '';
+    await first.syncNow();
+
+    const second = await createProtectedVault(network.createDevice());
+    await second.importText(backup);
+    await second.startBrowserSync(recoveryKey, true);
+    expect(second.accounts.map((account) => account.secret)).toEqual([SECRET]);
+  });
+
   test('pending account actions follow an identity changed by a joining duplicate', async () => {
     const network = createBrowserSyncNetwork();
     const firstDevice = network.createDevice();

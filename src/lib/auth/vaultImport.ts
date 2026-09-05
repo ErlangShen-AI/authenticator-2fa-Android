@@ -50,7 +50,7 @@ export function importTextIntoStoredVault(text: string): Promise<ImportResult> {
 async function importTextIntoStoredVaultNow(text: string): Promise<ImportResult> {
   const parsed = importAnyText(text);
   const loaded = await loadUnlockedStoredVault();
-  const merged = mergeImportedAccounts(
+  const merged = await mergeImportedAccounts(
     loaded.data.accounts,
     parsed.accounts,
     loaded.data.browserSync
@@ -85,11 +85,11 @@ export function getImportResultMessage(result: ImportResult): string {
   return 'No account was found to import.';
 }
 
-export function mergeImportedAccounts(
+export async function mergeImportedAccounts(
   existing: AuthenticatorAccount[],
   incoming: AuthenticatorAccount[],
   browserSync?: BrowserSyncState
-): MergeResult {
+): Promise<MergeResult> {
   const existingAccounts = normalizeAccountOrder(existing);
   const incomingAccounts = normalizeImportedAccounts(incoming);
   const fingerprints = new Set(existingAccounts.map(accountFingerprint));
@@ -117,7 +117,7 @@ export function mergeImportedAccounts(
 
   const accounts = [...existingAccounts, ...additions];
   const restored = browserSync && additions.length > 0
-    ? reconcileSyncAccounts(browserSync, accounts, [], additions.map((account) => account.id))
+    ? await reconcileSyncAccounts(browserSync, accounts, [], additions.map((account) => account.id))
     : null;
   return {
     accounts: restored?.accounts ?? accounts,
