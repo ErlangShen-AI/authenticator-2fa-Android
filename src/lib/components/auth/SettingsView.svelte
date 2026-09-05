@@ -2,6 +2,7 @@
   import { fade } from 'svelte/transition';
   import {
     ChevronRight,
+    Cloud,
     DatabaseBackup,
     KeyRound,
     Monitor,
@@ -11,6 +12,7 @@
     Trash2
   } from '@lucide/svelte';
   import ImportExportPanel from './ImportExportPanel.svelte';
+  import BrowserSyncPanel from './BrowserSyncPanel.svelte';
   import Toast from './Toast.svelte';
   import ViewHeader from './ViewHeader.svelte';
   import { FADE_TRANSITION, panelReveal, viewTransition } from './transitions';
@@ -38,6 +40,8 @@
   let confirmNewPassword = $state('');
   let resetConfirmation = $state('');
   let showTransfer = $state(false);
+  let showSync = $state(false);
+  let returnToSync = $state(false);
   let sortSaving = $state(false);
   let securitySaving = $state(false);
   let intent = $state<Intent>('idle');
@@ -132,9 +136,17 @@
     intent = 'changing';
   }
 
+  function protectForSync() {
+    showSync = false;
+    returnToSync = true;
+    resetForm();
+    intent = 'enabling';
+  }
+
   function cancel() {
     resetForm();
     intent = 'idle';
+    returnToSync = false;
   }
 
   async function applyPassword() {
@@ -146,7 +158,9 @@
     try {
       await vault.changePassword(intent === 'changing' ? currentPassword : '', newPassword);
       if (!vault.error) {
+        const reopenSync = returnToSync;
         cancel();
+        showSync = reopenSync;
       }
     } finally {
       securitySaving = false;
@@ -186,7 +200,7 @@
 
 <!-- The transfer screen covers this view, so settings stay out of the tab order
      while it is open. -->
-<div class="flex h-full flex-col overflow-hidden" inert={showTransfer}>
+<div class="flex h-full flex-col overflow-hidden" inert={showTransfer || showSync}>
   <ViewHeader title={tr('settings')} {onback} />
 
   <div class="grow space-y-5 overflow-y-auto p-3">
@@ -304,6 +318,28 @@
       </label>
     </section>
 
+    <section class="space-y-3">
+      <h2 class="text-xs font-bold uppercase tracking-wide text-base-content/50">{tr('browserSync')}</h2>
+      <button
+        class="btn btn-block h-auto min-h-10 justify-between border border-base-content/20 bg-base-200 py-2"
+        type="button"
+        onclick={() => (showSync = true)}
+      >
+        <span class="flex min-w-0 items-center gap-2 text-start">
+          <Cloud class="shrink-0" size={16} aria-hidden="true" />
+          <span class="min-w-0 whitespace-normal">
+            <span class="block text-sm">{tr('browserSync')}</span>
+            {#if vault.syncEnabled || vault.syncError}
+              <span class={['block text-xs font-normal', vault.syncStatus === 'pending' || vault.syncStatus === 'error' ? 'text-warning' : 'text-base-content/60']} role="status">
+                {vault.syncStatus === 'syncing' ? tr('syncSyncing') : vault.syncStatus === 'pending' ? tr('syncPending') : vault.syncStatus === 'error' ? tr('syncErrorStatus') : tr('syncReady')}
+              </span>
+            {/if}
+          </span>
+        </span>
+        <ChevronRight class="shrink-0 opacity-50" size={16} aria-hidden="true" />
+      </button>
+    </section>
+
     <!-- Backup -->
     <section class="space-y-3">
       <h2 class="text-xs font-bold uppercase tracking-wide text-base-content/50">{tr('importExport')}</h2>
@@ -331,7 +367,7 @@
         <span class="min-w-0">
           <span class="block text-sm font-medium">{tr('passwordProtection')}</span>
           <span class="block text-xs text-base-content/60">
-            {vault.passwordProtected ? tr('protectionOnHint') : tr('protectionOffHint')}
+            {vault.syncEnabled ? tr('syncProtectionHint') : vault.passwordProtected ? tr('protectionOnHint') : tr('protectionOffHint')}
           </span>
         </span>
         <input
@@ -339,7 +375,7 @@
           type="checkbox"
           checked={wantsProtection}
           onchange={toggleProtection}
-          disabled={securityPending}
+          disabled={securityPending || vault.syncEnabled}
         />
       </label>
 
@@ -431,6 +467,9 @@
           <input class="input input-sm w-full" bind:value={resetConfirmation} autocomplete="off" placeholder="DELETE" disabled={securityPending} />
         </label>
         <p class="text-xs text-base-content/60">{tr('deleteVaultConfirm')}</p>
+        {#if vault.syncEnabled}
+          <p class="text-xs text-base-content/60">{tr('syncLocalDeleteHint')}</p>
+        {/if}
         <button class="btn btn-error btn-block btn-sm" type="button" onclick={resetVault} disabled={securityPending || resetConfirmation !== 'DELETE'}>
           <Trash2 size={16} aria-hidden="true" />
           {tr('deleteVault')}
@@ -443,7 +482,7 @@
 <!-- The transfer screen reports import and export results inline, so the shared
      toast stays quiet while it is open. -->
 <Toast
-  message={showTransfer ? '' : settingsToastError || vault.notice}
+  message={showTransfer || showSync ? '' : settingsToastError || vault.notice}
   variant={settingsToastError ? 'error' : 'notice'}
   nonce={vault.noticeKey}
 />
@@ -457,5 +496,11 @@
       onimportencrypted={(text, password) => vault.importEncryptedBackupText(text, password)}
       onclose={() => (showTransfer = false)}
     />
+  </div>
+{/if}
+
+{#if showSync}
+  <div class="fixed inset-0 z-30 bg-base-100" transition:viewTransition={{ x: 20 }}>
+    <BrowserSyncPanel onclose={() => (showSync = false)} onprotect={protectForSync} />
   </div>
 {/if}

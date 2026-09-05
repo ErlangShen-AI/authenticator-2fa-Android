@@ -12,6 +12,9 @@ export function createPlainVaultRecord(
   data: VaultData,
   previous?: PlainVaultRecord | null
 ): PlainVaultRecord {
+  if (data.browserSync) {
+    throw new Error('Browser Sync requires a password-protected vault.');
+  }
   const now = new Date().toISOString();
   return {
     version: 1,

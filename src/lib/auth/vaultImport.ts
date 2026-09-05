@@ -20,6 +20,7 @@ import {
   unlockVaultEnvelopeWithKey
 } from './vaultCrypto';
 import { createPlainVaultRecord, isEncryptedVaultRecord, isPlainVaultRecord } from './vaultRecords';
+import { withVaultLock } from './vaultLock';
 
 interface MergeResult {
   accounts: AuthenticatorAccount[];
@@ -40,13 +41,22 @@ type LoadedVault =
       key: CryptoKey;
     };
 
-export async function importTextIntoStoredVault(text: string): Promise<ImportResult> {
+export function importTextIntoStoredVault(text: string): Promise<ImportResult> {
+  return withVaultLock(() => importTextIntoStoredVaultNow(text));
+}
+
+async function importTextIntoStoredVaultNow(text: string): Promise<ImportResult> {
   const parsed = importAnyText(text);
   const loaded = await loadUnlockedStoredVault();
-  const merged = mergeImportedAccounts(loaded.data.accounts, parsed.accounts);
+  const merged = mergeImportedAccounts(
+    loaded.data.accounts,
+    parsed.accounts,
+    Object.keys(loaded.data.browserSync?.records ?? {})
+  );
 
   if (merged.imported > 0) {
     await saveLoadedVault(loaded, {
+      ...loaded.data,
       accounts: merged.accounts,
       settings: normalizeAppSettings(loaded.data.settings)
     });
@@ -74,12 +84,13 @@ export function getImportResultMessage(result: ImportResult): string {
 
 export function mergeImportedAccounts(
   existing: AuthenticatorAccount[],
-  incoming: AuthenticatorAccount[]
+  incoming: AuthenticatorAccount[],
+  reservedIds: Iterable<string> = []
 ): MergeResult {
   const existingAccounts = normalizeAccountOrder(existing);
   const incomingAccounts = normalizeImportedAccounts(incoming);
   const fingerprints = new Set(existingAccounts.map(accountFingerprint));
-  const accountIds = new Set(existingAccounts.map((account) => account.id));
+  const accountIds = new Set([...existingAccounts.map((account) => account.id), ...reservedIds]);
   const additions: AuthenticatorAccount[] = [];
   let skipped = 0;
 
@@ -174,6 +185,7 @@ async function loadUnlockedStoredVault(): Promise<LoadedVault> {
     return {
       type: 'plain',
       data: {
+        ...stored.data,
         accounts: normalizeAccountOrder(stored.data.accounts),
         settings: normalizeAppSettings(stored.data.settings)
       },
@@ -195,6 +207,7 @@ async function loadUnlockedStoredVault(): Promise<LoadedVault> {
   return {
     type: 'encrypted',
     data: {
+      ...unlocked.data,
       accounts: normalizeAccountOrder(unlocked.data.accounts),
       settings: normalizeAppSettings(unlocked.data.settings)
     },
@@ -205,6 +218,7 @@ async function loadUnlockedStoredVault(): Promise<LoadedVault> {
 
 async function saveLoadedVault(loaded: LoadedVault, data: VaultData): Promise<void> {
   const normalizedData = {
+    ...data,
     accounts: normalizeAccountOrder(data.accounts),
     settings: normalizeAppSettings(data.settings)
   };

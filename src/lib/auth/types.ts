@@ -1,4 +1,5 @@
 import { DEFAULT_LANGUAGE, detectBrowserLanguage, resolveSupportedLanguage } from '../i18n/languages';
+import type { BrowserSyncState } from './browserSync';
 
 export type OtpType = 'totp' | 'hotp' | 'steam';
 
@@ -52,6 +53,8 @@ export interface ImportResult {
 export interface VaultData {
   accounts: AuthenticatorAccount[];
   settings: AppSettings;
+  // This includes the recovery key and must only be stored inside an encrypted vault.
+  browserSync?: BrowserSyncState;
 }
 
 export interface AppSettings {

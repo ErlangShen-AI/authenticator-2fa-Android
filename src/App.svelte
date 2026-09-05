@@ -163,6 +163,7 @@
   }
 
   onMount(() => {
+    const stopWatchingStorage = vault.watchStorage();
     void initializeApp();
     const timer = window.setInterval(() => void vault.refreshCodes(), 1000);
 
@@ -183,6 +184,7 @@
 
     return () => {
       window.clearInterval(timer);
+      stopWatchingStorage();
       if (hasRuntimeMessaging()) {
         chrome.runtime.onMessage.removeListener(listener);
       }
