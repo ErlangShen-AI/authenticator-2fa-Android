@@ -1,9 +1,8 @@
 type StorageCallback = () => void;
 
-export class MockStorageArea {
+class MockStorageArea {
   readError = '';
   writeError = '';
-  removeError = '';
   writeDelayMs = 0;
   writes = 0;
 
@@ -34,10 +33,8 @@ export class MockStorageArea {
   }
 
   remove(keys: string | string[], callback: StorageCallback): void {
-    if (!this.removeError) {
-      for (const key of typeof keys === 'string' ? [keys] : keys) delete this.values[key];
-    }
-    this.complete(this.removeError, callback);
+    for (const key of typeof keys === 'string' ? [keys] : keys) delete this.values[key];
+    this.complete('', callback);
   }
 
   private complete(message: string, callback: StorageCallback): void {

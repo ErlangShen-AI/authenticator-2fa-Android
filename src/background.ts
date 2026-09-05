@@ -1,6 +1,9 @@
 import { decodeQrDataUrlInWorker } from './lib/auth/qrWorker';
 import type { PageContext } from './lib/auth/accountRanking';
 import { getImportResultMessage, importTextIntoStoredVault } from './lib/auth/vaultImport';
+import { installBrowserSyncCleanup } from './lib/auth/browserSyncCleanup';
+
+installBrowserSyncCleanup();
 
 interface CaptureRect {
   left: number;

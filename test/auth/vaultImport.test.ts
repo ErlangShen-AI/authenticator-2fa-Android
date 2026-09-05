@@ -9,7 +9,7 @@ import {
   getVaultKeyFingerprint,
   unlockVaultEnvelope
 } from '../../src/lib/auth/vaultCrypto';
-import { importTextIntoStoredVault, mergeImportedAccounts } from '../../src/lib/auth/vaultImport';
+import { importTextIntoStoredVault } from '../../src/lib/auth/vaultImport';
 import { isEncryptedVaultRecord, isPlainVaultRecord } from '../../src/lib/auth/vaultRecords';
 import { AuthenticatorVault } from '../../src/lib/state/authenticator.svelte';
 import { installMemoryStorage, installStructuredCloneChromeStorage } from '../helpers/storage';
@@ -207,21 +207,12 @@ describe('importTextIntoStoredVault', () => {
     }
     expect(JSON.stringify(stored)).not.toContain(browserSync.recoveryKey);
     const { data } = await unlockVaultEnvelope(stored, PASSWORD);
-    expect(data.browserSync).toEqual(browserSync);
+    expect(data.browserSync).toMatchObject({ recoveryKey: browserSync.recoveryKey, deviceId });
+    expect(data.browserSync?.records[account.id]).toMatchObject({ revision: 3, deviceId });
     expect(data.accounts.map((item) => item.label)).toEqual([
       'alice@example.com',
       'bob@example.com'
     ]);
-  });
-
-  test('assigns an explicitly imported account a new ID when its previous ID is reserved', () => {
-    const account = createAccount({ label: 'Alice', secret: 'JBSWY3DPEHPK3PXP' });
-
-    const imported = mergeImportedAccounts([], [account], [account.id]);
-
-    expect(imported.imported).toBe(1);
-    expect(imported.accounts[0]).toMatchObject({ label: account.label, secret: account.secret });
-    expect(imported.accounts[0].id).not.toBe(account.id);
   });
 
   test('a background JSON import of a deleted synced account gets a fresh ID', async () => {
@@ -249,7 +240,8 @@ describe('importTextIntoStoredVault', () => {
     const { data } = await unlockVaultEnvelope(stored, PASSWORD);
     expect(data.accounts[0].id).not.toBe(account.id);
     expect(data.accounts[0].label).toBe('Alice');
-    expect(data.browserSync).toEqual(browserSync);
+    expect(data.browserSync).toMatchObject(browserSync);
+    expect(data.browserSync?.records[data.accounts[0].id].restorationId).toBe(data.accounts[0].id);
   });
 
   test('rejects encrypted imports after the vault is manually locked', async () => {

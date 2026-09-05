@@ -6,7 +6,6 @@ import {
   encryptSyncRecord,
   getSyncMarkerKey,
   getSyncNamespace,
-  mergeSyncRecords,
   parseSyncRecoveryKey,
   reconcileSyncAccounts,
   validateSyncMarker,
@@ -14,6 +13,7 @@ import {
   type BrowserSyncState
 } from './browserSync';
 import { BrowserSyncError, readBrowserSyncItems, writeBrowserSyncItems } from './browserSyncStorage';
+import { cleanupDeletedSyncGroups, isDeletedSyncGroup, rememberDeletedSyncGroup } from './browserSyncCleanup';
 import type { AuthenticatorAccount } from './types';
 
 export async function connectBrowserSync(
@@ -30,14 +30,17 @@ export async function connectBrowserSync(
   const items = await readBrowserSyncItems();
   const markerKey = await getSyncMarkerKey(recoveryKey);
   if (!join && !items[markerKey]) {
+    if (await isDeletedSyncGroup(await getSyncNamespace(recoveryKey))) throw new BrowserSyncError('notFound');
     const marker = await createSyncMarker(recoveryKey);
     await writeBrowserSyncItems(items, { [marker.storageKey]: marker.value });
     items[marker.storageKey] = marker.value;
   }
-  const records = mergeSyncRecords(await readRecords(recoveryKey, items));
+  const records = await readRecords(recoveryKey, items);
+  // Merged counters need a durable local revision before any contributing slot changes.
+  const { state } = reconcileSyncAccounts({ recoveryKey, deviceId: crypto.randomUUID(), records: {} }, [], records);
   return {
-    state: { recoveryKey, deviceId: crypto.randomUUID(), records: Object.fromEntries(records.map((record) => [record.id, record])) },
-    accounts: alignSyncAccounts(localAccounts, records)
+    state,
+    accounts: alignSyncAccounts(localAccounts, Object.values(state.records))
   };
 }
 
@@ -72,16 +75,8 @@ export async function prepareBrowserSync(state: BrowserSyncState, accounts: Auth
 }
 
 export async function deleteBrowserSyncGroup(recoveryKey: string): Promise<void> {
-  const items = await readBrowserSyncItems();
-  const prefix = `${SYNC_PREFIX}${await getSyncNamespace(recoveryKey)}:`;
-  const keys = Object.keys(items).filter((key) => key.startsWith(prefix));
-  if (keys.length === 0) return;
-  await new Promise<void>((resolve, reject) => {
-    chrome.storage.sync.remove(keys, () => {
-      if (chrome.runtime.lastError) reject(new BrowserSyncError('storage'));
-      else resolve();
-    });
-  });
+  await rememberDeletedSyncGroup(await getSyncNamespace(recoveryKey));
+  await cleanupDeletedSyncGroups();
 }
 
 async function readRecords(recoveryKey: string, items: Record<string, unknown>): Promise<BrowserSyncRecord[]> {
@@ -97,6 +92,7 @@ async function readRecords(recoveryKey: string, items: Record<string, unknown>):
 }
 
 async function readMarker(recoveryKey: string, items: Record<string, unknown>): Promise<string> {
+  if (await isDeletedSyncGroup(await getSyncNamespace(recoveryKey))) throw new BrowserSyncError('notFound');
   const markerKey = await getSyncMarkerKey(recoveryKey);
   if (!items[markerKey]) throw new BrowserSyncError('notFound');
   try {

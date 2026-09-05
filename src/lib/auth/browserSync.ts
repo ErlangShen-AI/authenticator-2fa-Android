@@ -14,6 +14,10 @@ export interface BrowserSyncRecord {
   revision: number;
   deviceId: string;
   account: AuthenticatorAccount | null;
+  /** Earlier identities of the same account, retained through edits and deletion. */
+  mergedIds?: string[];
+  /** An explicit restore starts a new identity, protected from older deletions. */
+  restorationId?: string;
 }
 
 /** Stored only inside the password-protected local vault, never in storage.sync. */
@@ -95,30 +99,100 @@ export async function decryptSyncRecord(
   return record;
 }
 
-/** Deletion is permanent for an account ID; adding the account again creates a new ID. */
+/** Deletion is permanent for an identity and its known duplicates. */
 export function mergeSyncRecords(records: readonly BrowserSyncRecord[]): BrowserSyncRecord[] {
-  const groups = new Map<string, BrowserSyncRecord[]>();
-  for (const value of records) {
-    const record = normalizeSyncRecord(value);
-    const group = groups.get(record.id) ?? [];
-    group.push(record);
-    groups.set(record.id, group);
+  const normalized = records.map(normalizeSyncRecord);
+  const parents = new Map<string, string>();
+  const identity = (record: BrowserSyncRecord, id: string) => JSON.stringify([record.restorationId ?? '', id]);
+  const root = (id: string): string => {
+    const path: string[] = [];
+    while (parents.has(id)) {
+      path.push(id);
+      id = parents.get(id)!;
+    }
+    for (const child of path) parents.set(child, id);
+    return id;
+  };
+  for (const record of normalized) {
+    for (const id of record.mergedIds ?? []) {
+      const left = root(identity(record, record.id));
+      const right = root(identity(record, id));
+      if (left !== right) parents.set(right, left);
+    }
   }
 
-  return Array.from(groups.values(), (group) => {
-    const deleted = group.filter((record) => record.account === null);
-    const candidates = deleted.length ? deleted : group;
-    const winner = candidates.reduce((left, right) => compareRecords(left, right) >= 0 ? left : right);
-    if (winner.account?.type !== 'hotp') return winner;
+  const groups = new Map<string, BrowserSyncRecord[]>();
+  for (const record of normalized) {
+    const id = root(identity(record, record.id));
+    const group = groups.get(id) ?? [];
+    group.push(record);
+    groups.set(id, group);
+  }
 
-    const account = winner.account;
+  const identities = Array.from(groups.values(), mergeRecordGroup);
+  const restorations = identities.filter((record) => record.restorationId);
+  const independent: BrowserSyncRecord[] = [];
+  for (const record of identities.filter((record) => !record.restorationId)) {
+    let superseded = false;
+    for (let index = 0; index < restorations.length; index++) {
+      if (recordIds(record).some((id) => recordIds(restorations[index]).includes(id))) {
+        // Keep late alias links even when their old identity is already deleted.
+        restorations[index] = mergeRecordGroup([restorations[index], record]);
+        superseded = true;
+      }
+    }
+    if (!superseded) independent.push(record);
+  }
+
+  // Deleted identities cannot fingerprint-match a new restoration.
+  const deleted: BrowserSyncRecord[] = [];
+  const fingerprints = new Map<string, BrowserSyncRecord[]>();
+  for (const record of [...restorations, ...independent]) {
+    if (!record.account) {
+      deleted.push(record);
+      continue;
+    }
+    const fingerprint = accountFingerprint(record.account);
+    const duplicates = fingerprints.get(fingerprint) ?? [];
+    duplicates.push(record);
+    fingerprints.set(fingerprint, duplicates);
+  }
+  const live = Array.from(fingerprints.values()).flatMap((group) => {
+    const restored = group.filter((record) => record.restorationId).sort((left, right) => compareText(left.id, right.id));
+    if (restored.length === 0) return [mergeRecordGroup(group)];
+    const copies = group.filter((record) => !record.restorationId);
+    // Independent explicit restores stay separate; ordinary joining copies
+    // adopt a restored identity without transferring old deletions into it.
+    return restored.map((record, index) => index === 0 ? mergeRecordGroup([record, ...copies]) : record);
+  });
+  return [...deleted, ...live]
+    .sort((left, right) => compareText(left.id, right.id));
+}
+
+function mergeRecordGroup(group: BrowserSyncRecord[]): BrowserSyncRecord {
+  const restored = group.filter((record) => record.restorationId);
+  const generation = restored.length ? restored : group;
+  const deleted = generation.filter((record) => record.account === null);
+  const candidates = deleted.length ? deleted : generation;
+  const winner = candidates.reduce((left, right) => compareRecords(left, right) >= 0 ? left : right);
+  const ids = Array.from(new Set(group.flatMap(recordIds))).sort(compareText);
+  const id = winner.restorationId ?? ids[0];
+  const mergedIds = ids.filter((value) => value !== id);
+  let account = winner.account && { ...winner.account, id };
+  if (account?.type === 'hotp') {
+    const hotp = account;
     const counter = Math.max(...group.map((record) => {
       const other = record.account;
-      return other?.type === 'hotp' && other.secret === account.secret && other.algorithm === account.algorithm
-        ? other.counter : account.counter;
+      return other?.type === 'hotp' && other.secret === hotp.secret && other.algorithm === hotp.algorithm
+        ? other.counter : hotp.counter;
     }));
-    return { ...winner, account: { ...account, counter } };
-  }).sort((left, right) => compareText(left.id, right.id));
+    account = { ...account, counter };
+  }
+  return {
+    id, revision: winner.revision, deviceId: winner.deviceId, account,
+    ...(mergedIds.length ? { mergedIds } : {}),
+    ...(winner.restorationId ? { restorationId: winner.restorationId } : {})
+  };
 }
 
 /** Joining keeps existing remote identities, while retaining distinct local accounts. */
@@ -127,10 +201,10 @@ export function alignSyncAccounts(
   remoteRecords: readonly BrowserSyncRecord[]
 ): AuthenticatorAccount[] {
   const remote = mergeSyncRecords(remoteRecords);
-  const recordsById = new Map(remote.map((record) => [record.id, record]));
+  const recordsById = indexSyncIdentities(remote);
   const accounts = remote.flatMap((record) => record.account ? [record.account] : []);
   const byFingerprint = new Map(accounts.map((account) => [accountFingerprint(account), account]));
-  const byId = new Map(accounts.map((account) => [account.id, account]));
+  const byId = new Map(Array.from(recordsById).flatMap(([id, record]) => record.account ? [[id, record.account] as const] : []));
   for (const local of normalizeImportedAccounts(localAccounts)) {
     if (recordsById.get(local.id)?.account === null) continue;
     const existing = byId.get(local.id) ?? byFingerprint.get(accountFingerprint(local));
@@ -156,7 +230,8 @@ export function alignSyncAccounts(
 export function reconcileSyncAccounts(
   state: BrowserSyncState,
   currentAccounts: readonly AuthenticatorAccount[],
-  remoteRecords: readonly BrowserSyncRecord[]
+  remoteRecords: readonly BrowserSyncRecord[],
+  restoredIds: readonly string[] = []
 ): { state: BrowserSyncState; accounts: AuthenticatorAccount[]; writes: BrowserSyncRecord[] } {
   if (!UUID.test(state.deviceId)) throw new Error(INVALID_DATA);
   const recoveryKey = parseSyncRecoveryKey(state.recoveryKey);
@@ -175,34 +250,47 @@ export function reconcileSyncAccounts(
   for (const account of current) {
     const previous = previousById.get(account.id);
     const syncedAccount = withoutLocalOrder(account);
-    if (!previous || JSON.stringify(previous.account) !== JSON.stringify(syncedAccount)) {
-      changes.push({ id: account.id, revision: nextRevision(), deviceId: state.deviceId, account: syncedAccount });
+    const restorationId = restoredIds.includes(account.id) ? account.id : previous?.restorationId;
+    if (!previous || JSON.stringify(previous.account) !== JSON.stringify(syncedAccount) || restorationId !== previous.restorationId) {
+      changes.push({
+        id: account.id, revision: nextRevision(), deviceId: state.deviceId, account: syncedAccount,
+        ...(restorationId ? { restorationId } : {})
+      });
     }
   }
   for (const previous of baseline) {
     if (previous.account && !currentById.has(previous.id)) {
-      changes.push({ id: previous.id, revision: nextRevision(), deviceId: state.deviceId, account: null });
+      changes.push({
+        id: previous.id, revision: nextRevision(), deviceId: state.deviceId, account: null,
+        ...(previous.restorationId ? { restorationId: previous.restorationId } : {})
+      });
     }
   }
 
-  const candidates = [...baseline, ...changes, ...remoteRecords.map(normalizeSyncRecord)];
+  const incoming = remoteRecords.map(normalizeSyncRecord);
+  const candidates = [...baseline, ...changes, ...incoming];
   revision = Math.max(revision, ...candidates.map((record) => record.revision));
-  const candidateValues = new Set(candidates.map((record) => JSON.stringify(record)));
+  // Earlier joins could save a combined counter under a remote revision. The
+  // actual record for that revision tells us whether it still needs publishing.
+  const candidateValues = new Set([...changes, ...incoming, ...baseline.filter((record) =>
+    !incoming.some((other) => other.id === record.id && other.deviceId === record.deviceId && other.revision === record.revision)
+  )].map((record) => JSON.stringify(record)));
   const merged = mergeSyncRecords(candidates).map((record) => {
-    // A counter merged from an older record needs its own revision so it is
-    // persisted in this device's slot without rewriting another device's slot.
+    // Combined counters and identities need a revision in this device's slot.
     if (!candidateValues.has(JSON.stringify(record))) {
       return { ...record, revision: nextRevision(), deviceId: state.deviceId };
     }
     return record;
   });
   const surviving = new Map(merged.flatMap((record) => record.account ? [[record.id, record.account] as const] : []));
+  const identities = indexSyncIdentities(merged);
   const accounts: AuthenticatorAccount[] = [];
   let nextOrder = current.reduce((maximum, account, index) => Math.max(maximum, account.sortOrder ?? index), -1) + 1;
   for (const account of current) {
-    const survivor = surviving.get(account.id);
+    const id = identities.get(account.id)?.id ?? account.id;
+    const survivor = surviving.get(id);
     if (survivor) accounts.push(account.sortOrder === undefined ? survivor : { ...survivor, sortOrder: account.sortOrder });
-    surviving.delete(account.id);
+    surviving.delete(id);
   }
   accounts.push(...Array.from(surviving.values(), (account) => ({ ...account, sortOrder: nextOrder++ })));
 
@@ -217,14 +305,36 @@ function normalizeSyncRecord(value: unknown): BrowserSyncRecord {
   if (
     !isObject(value) || typeof value.id !== 'string' || !value.id.trim() || value.id.length > 512 ||
     typeof value.deviceId !== 'string' || !UUID.test(value.deviceId) ||
-    typeof value.revision !== 'number' || !Number.isSafeInteger(value.revision) || value.revision < 1
+    typeof value.revision !== 'number' || !Number.isSafeInteger(value.revision) || value.revision < 1 ||
+    (value.restorationId !== undefined && value.restorationId !== value.id) ||
+    (value.mergedIds !== undefined && (!Array.isArray(value.mergedIds) || value.mergedIds.some((id) =>
+      typeof id !== 'string' || !id.trim() || id.length > 512)))
   ) throw new Error(INVALID_DATA);
 
   const account = value.account === null ? null : withoutLocalOrder(normalizeImportedAccounts([value.account])[0]);
   if (account && (account.id !== value.id || !Number.isFinite(Date.parse(account.createdAt)) || !Number.isFinite(Date.parse(account.updatedAt)))) {
     throw new Error(INVALID_DATA);
   }
-  return { id: value.id, revision: value.revision, deviceId: value.deviceId, account };
+  const mergedIds = Array.from(new Set(value.mergedIds as string[] | undefined)).filter((id) => id !== value.id).sort(compareText);
+  return {
+    id: value.id, revision: value.revision, deviceId: value.deviceId, account,
+    ...(mergedIds.length ? { mergedIds } : {}),
+    ...(value.restorationId ? { restorationId: value.id } : {})
+  };
+}
+
+function recordIds(record: BrowserSyncRecord): string[] {
+  return [record.id, ...(record.mergedIds ?? [])];
+}
+
+function indexSyncIdentities(records: BrowserSyncRecord[]): Map<string, BrowserSyncRecord> {
+  const aliases = [...records].sort((left, right) =>
+    Number(Boolean(left.account)) - Number(Boolean(right.account)) || compareText(right.id, left.id));
+  // Canonical identities own their IDs. Shared old aliases prefer a live restore.
+  return new Map([
+    ...aliases.flatMap((record) => (record.mergedIds ?? []).map((id) => [id, record] as const)),
+    ...records.map((record) => [record.id, record] as const)
+  ]);
 }
 
 async function getRecordKey(recoveryKey: string, record: BrowserSyncRecord): Promise<string> {

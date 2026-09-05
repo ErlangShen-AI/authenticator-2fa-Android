@@ -5,6 +5,7 @@ import {
   saveStoredVault
 } from './storage';
 import { normalizeImportedAccounts } from './otp';
+import { reconcileSyncAccounts, type BrowserSyncState } from './browserSync';
 import type {
   AuthenticatorAccount,
   ImportResult,
@@ -23,6 +24,7 @@ import { createPlainVaultRecord, isEncryptedVaultRecord, isPlainVaultRecord } fr
 import { withVaultLock } from './vaultLock';
 
 interface MergeResult {
+  browserSync?: BrowserSyncState;
   accounts: AuthenticatorAccount[];
   imported: number;
   skipped: number;
@@ -51,12 +53,13 @@ async function importTextIntoStoredVaultNow(text: string): Promise<ImportResult>
   const merged = mergeImportedAccounts(
     loaded.data.accounts,
     parsed.accounts,
-    Object.keys(loaded.data.browserSync?.records ?? {})
+    loaded.data.browserSync
   );
 
   if (merged.imported > 0) {
     await saveLoadedVault(loaded, {
       ...loaded.data,
+      ...(merged.browserSync ? { browserSync: merged.browserSync } : {}),
       accounts: merged.accounts,
       settings: normalizeAppSettings(loaded.data.settings)
     });
@@ -85,12 +88,12 @@ export function getImportResultMessage(result: ImportResult): string {
 export function mergeImportedAccounts(
   existing: AuthenticatorAccount[],
   incoming: AuthenticatorAccount[],
-  reservedIds: Iterable<string> = []
+  browserSync?: BrowserSyncState
 ): MergeResult {
   const existingAccounts = normalizeAccountOrder(existing);
   const incomingAccounts = normalizeImportedAccounts(incoming);
   const fingerprints = new Set(existingAccounts.map(accountFingerprint));
-  const accountIds = new Set([...existingAccounts.map((account) => account.id), ...reservedIds]);
+  const accountIds = new Set(existingAccounts.map((account) => account.id));
   const additions: AuthenticatorAccount[] = [];
   let skipped = 0;
 
@@ -102,7 +105,8 @@ export function mergeImportedAccounts(
     }
 
     fingerprints.add(fingerprint);
-    const id = accountIds.has(account.id) ? crypto.randomUUID() : account.id;
+    // An explicit restore must not inherit an unseen remote deletion.
+    const id = browserSync || accountIds.has(account.id) ? crypto.randomUUID() : account.id;
     accountIds.add(id);
     additions.push({
       ...account,
@@ -111,8 +115,13 @@ export function mergeImportedAccounts(
     });
   }
 
+  const accounts = [...existingAccounts, ...additions];
+  const restored = browserSync && additions.length > 0
+    ? reconcileSyncAccounts(browserSync, accounts, [], additions.map((account) => account.id))
+    : null;
   return {
-    accounts: [...existingAccounts, ...additions],
+    accounts: restored?.accounts ?? accounts,
+    ...(restored ? { browserSync: restored.state } : {}),
     imported: additions.length,
     skipped
   };

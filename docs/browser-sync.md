@@ -12,14 +12,14 @@ Browser Sync is optional and uses the existing storage permission. It adds no ac
 
 - Sync works within the same browser provider and extension identity on supported devices. It does not bridge providers; platform support varies.
 - Changes merge while the extension is open and unlocked. The browser handles delivery. A successful check cannot confirm another device received the changes.
-- Each device writes separate encrypted records. Concurrent edits resolve deterministically; deletions win, including against offline edits. Preferences and ordering stay local.
+- Each device writes separate encrypted records. Concurrent edits resolve deterministically; deletions win against offline edits. Explicit restores get fresh identities that older deletions cannot remove. Preferences and ordering stay local.
 - HOTP counters never move backward during merging, but simultaneous use can repeat or skip codes. Use HOTP on one device at a time.
 - Pending changes save locally before upload and retry after reopening. Invalid remote data pauses sync without replacing local accounts.
 - Browser storage allows about 100 KB total and 8 KB per item, with item and write limits. Many devices or retained deletion records can fill it. Local accounts remain usable if sync fails.
 
 ## Disconnecting
 
-**Stop syncing** or deleting the local vault keeps the encrypted synced copy. **Delete synced copy** removes the current group's cloud data and pauses other devices; their local accounts remain. Offline delivery may delay removal.
+**Stop syncing** or deleting the local vault keeps the encrypted synced copy. **Delete synced copy** removes the current group's cloud data and pauses other devices; their local accounts remain. The deleting browser remembers the group and removes late arrivals when it runs again. Offline delivery may delay removal.
 
 To exclude an old device, delete the synced copy, start a new group, and share the new recovery key only with trusted devices. This cannot erase copies already obtained elsewhere. Keep independent backups: account deletions sync too.
 

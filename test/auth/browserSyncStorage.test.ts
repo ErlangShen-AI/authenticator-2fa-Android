@@ -13,9 +13,12 @@ import {
   writeBrowserSyncItems
 } from '../../src/lib/auth/browserSyncStorage';
 import { createAccount } from '../../src/lib/auth/otp';
+import { cleanupDeletedSyncGroups, installBrowserSyncCleanup, isDeletedSyncGroup } from '../../src/lib/auth/browserSyncCleanup';
 
 function installSyncStorage(initial: Record<string, unknown> = {}) {
   const values: Record<string, unknown> = structuredClone(initial);
+  const localValues: Record<string, unknown> = {};
+  const listeners = new Set<(changes: Record<string, chrome.storage.StorageChange>, area: string) => void>();
   const runtime: { lastError?: { message: string } } = {};
   let failure: string | undefined;
   const finish = (callback: () => void) => {
@@ -36,8 +39,29 @@ function installSyncStorage(initial: Record<string, unknown> = {}) {
       finish(callback);
     })
   };
-  vi.stubGlobal('chrome', { runtime, storage: { sync } });
-  return { values, sync, fail: (message?: string) => { failure = message; } };
+  const local = {
+    get: vi.fn((key: string | null, callback: (items: Record<string, unknown>) => void) => {
+      finish(() => callback(structuredClone(key === null ? localValues : { [key]: localValues[key] })));
+    }),
+    set: vi.fn((updates: Record<string, unknown>, callback: () => void) => {
+      if (!failure) Object.assign(localValues, structuredClone(updates));
+      finish(callback);
+    })
+  };
+  const onChanged = {
+    addListener: (listener: (changes: Record<string, chrome.storage.StorageChange>, area: string) => void) => listeners.add(listener),
+    removeListener: (listener: (changes: Record<string, chrome.storage.StorageChange>, area: string) => void) => listeners.delete(listener)
+  };
+  vi.stubGlobal('chrome', { runtime, storage: { sync, local, onChanged } });
+  return {
+    values, localValues, sync, local,
+    fail: (message?: string) => { failure = message; },
+    arrive: (updates: Record<string, unknown>) => {
+      Object.assign(values, structuredClone(updates));
+      const changes = Object.fromEntries(Object.entries(updates).map(([key, value]) => [key, { newValue: value }]));
+      for (const listener of listeners) listener(changes, 'sync');
+    }
+  };
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -231,5 +255,111 @@ describe('Browser Sync sessions', () => {
     await expect(prepared.publish()).rejects.toMatchObject({ code: 'quota' });
     expect(storage.sync.set).toHaveBeenCalledTimes(1);
     expect(prepared.accounts).toEqual([account]);
+  });
+});
+
+describe('deleted Browser Sync group cleanup', () => {
+  test('removes late records after disconnect without needing the vault or recovery key', async () => {
+    const storage = installSyncStorage({ unrelated: 'keep' });
+    const key = generateSyncRecoveryKey();
+    const group = await connectBrowserSync(key, false, []);
+    const markerKey = Object.keys(storage.values).find((value) => value.startsWith(SYNC_PREFIX))!;
+    const marker = structuredClone(storage.values[markerKey]);
+    const account = createAccount({ label: 'Late account', secret: 'JBSWY3DPEHPK3PXP' });
+    const item = await encryptSyncRecord(key, { id: account.id, revision: 1, deviceId: group.state.deviceId, account });
+    await deleteBrowserSyncGroup(key);
+
+    const stop = installBrowserSyncCleanup();
+    storage.arrive({ [item.storageKey]: item.value, [markerKey]: marker });
+    await vi.waitFor(() => expect(storage.values).toEqual({ unrelated: 'keep' }));
+    stop();
+    const namespace = await getSyncNamespace(key);
+    expect(await isDeletedSyncGroup(namespace)).toBe(true);
+    expect(JSON.stringify(storage.localValues)).not.toContain(key);
+    expect(JSON.stringify(storage.localValues)).not.toContain(account.secret);
+  });
+
+  test('retains deletion intent after failed removal and retries on background restart', async () => {
+    const storage = installSyncStorage();
+    const key = generateSyncRecoveryKey();
+    await connectBrowserSync(key, false, []);
+    const remove = storage.sync.remove.getMockImplementation()!;
+    storage.sync.remove.mockImplementationOnce((keys, callback) => {
+      storage.fail('Storage unavailable');
+      remove(keys, callback);
+      storage.fail();
+    });
+    await expect(deleteBrowserSyncGroup(key)).rejects.toMatchObject({ code: 'storage' });
+    expect(await isDeletedSyncGroup(await getSyncNamespace(key))).toBe(true);
+    expect(Object.keys(storage.values)).toHaveLength(1);
+
+    const stop = installBrowserSyncCleanup();
+    await vi.waitFor(() => expect(storage.values).toEqual({}));
+    stop();
+    expect(await isDeletedSyncGroup(await getSyncNamespace(key))).toBe(true);
+  });
+
+  test('does not delete temporarily incomplete groups or infer deletion from a missing marker', async () => {
+    const storage = installSyncStorage();
+    const deletedKey = generateSyncRecoveryKey();
+    await connectBrowserSync(deletedKey, false, []);
+    await deleteBrowserSyncGroup(deletedKey);
+    const delayedKey = generateSyncRecoveryKey();
+    const account = createAccount({ label: 'Delayed group', secret: 'JBSWY3DPEHPK3PXP' });
+    const item = await encryptSyncRecord(delayedKey, { id: account.id, revision: 1, deviceId: crypto.randomUUID(), account });
+    storage.arrive({ [item.storageKey]: item.value });
+    await expect(connectBrowserSync(delayedKey, true, [])).rejects.toMatchObject({ code: 'notFound' });
+    await cleanupDeletedSyncGroups();
+    expect(storage.values[item.storageKey]).toEqual(item.value);
+    const marker = await createSyncMarker(delayedKey);
+    storage.arrive({ [marker.storageKey]: marker.value });
+    await cleanupDeletedSyncGroups();
+    await expect(connectBrowserSync(delayedKey, true, [])).resolves.toMatchObject({ accounts: [{ id: account.id }] });
+    expect(await isDeletedSyncGroup(await getSyncNamespace(delayedKey))).toBe(false);
+  });
+
+  test('rejects reuse of a retired recovery key even if an old marker arrives again', async () => {
+    const storage = installSyncStorage();
+    const key = generateSyncRecoveryKey();
+    const group = await connectBrowserSync(key, false, []);
+    const oldItems = structuredClone(storage.values);
+    await deleteBrowserSyncGroup(key);
+    const writes = storage.sync.set.mock.calls.length;
+    await expect(connectBrowserSync(key, false, [])).rejects.toMatchObject({ code: 'notFound' });
+    expect(storage.sync.set).toHaveBeenCalledTimes(writes);
+    storage.arrive(oldItems);
+    await expect(connectBrowserSync(key, true, [])).rejects.toMatchObject({ code: 'notFound' });
+    await expect(prepareBrowserSync(group.state, group.accounts)).rejects.toMatchObject({ code: 'notFound' });
+  });
+
+  test('does not delete cloud data unless its cleanup intent was saved durably', async () => {
+    const storage = installSyncStorage();
+    const key = generateSyncRecoveryKey();
+    await connectBrowserSync(key, false, []);
+    const before = structuredClone(storage.values);
+    storage.fail('Storage unavailable');
+    await expect(deleteBrowserSyncGroup(key)).rejects.toMatchObject({ code: 'storage' });
+    expect(storage.values).toEqual(before);
+    expect(storage.localValues).toEqual({});
+    expect(storage.sync.remove).not.toHaveBeenCalled();
+  });
+
+  test('keeps independent deletion intents when groups are retired concurrently', async () => {
+    const storage = installSyncStorage();
+    const first = generateSyncRecoveryKey();
+    const second = generateSyncRecoveryKey();
+    await connectBrowserSync(first, false, []);
+    await connectBrowserSync(second, false, []);
+    const save = storage.local.set.getMockImplementation()!;
+    const pending: Parameters<typeof save>[] = [];
+    storage.local.set.mockImplementation((...args) => {
+      pending.push(args);
+      if (pending.length === 2) for (const write of pending) save(...write);
+    });
+    await Promise.all([deleteBrowserSyncGroup(first), deleteBrowserSyncGroup(second)]);
+    expect(Object.keys(storage.localValues)).toHaveLength(2);
+    expect(storage.values).toEqual({});
+    expect(await isDeletedSyncGroup(await getSyncNamespace(first))).toBe(true);
+    expect(await isDeletedSyncGroup(await getSyncNamespace(second))).toBe(true);
   });
 });

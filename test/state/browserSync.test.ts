@@ -5,6 +5,7 @@ import { loadStoredVault } from '../../src/lib/auth/storage';
 import { unlockVaultEnvelope } from '../../src/lib/auth/vaultCrypto';
 import { isEncryptedVaultRecord } from '../../src/lib/auth/vaultRecords';
 import { AuthenticatorVault } from '../../src/lib/state/authenticator.svelte';
+import { importTextIntoStoredVault } from '../../src/lib/auth/vaultImport';
 import { createBrowserSyncNetwork, type BrowserSyncDevice } from '../helpers/browserSync';
 
 const PASSWORD = 'correct horse battery staple';
@@ -193,6 +194,49 @@ describe('Browser Sync vault integration', () => {
     await second.startBrowserSync(recoveryKey, true);
     expect(labels(second)).toEqual(['Alice']);
     expect(second.accounts[0].id).toBe(vault.accounts[0].id);
+  });
+
+  describe.each(['tombstone', 'live account then tombstone'])('delayed %s delivery', (delivery) => {
+    test.each(['json', 'encrypted', 'background'] as const)('preserves an explicit %s restore', async (format) => {
+      const network = createBrowserSyncNetwork();
+      const firstDevice = network.createDevice();
+      const first = await createProtectedVault(firstDevice);
+      const recoveryKey = generateSyncRecoveryKey();
+      await first.startBrowserSync(recoveryKey, false);
+      const secondDevice = network.createDevice();
+      const second = await createProtectedVault(secondDevice);
+      await second.startBrowserSync(recoveryKey, true);
+
+      firstDevice.install();
+      await first.addAccount({ label: 'Restored account', secret: SECRET });
+      await first.syncNow();
+      const account = first.accounts[0];
+      const backup = format === 'encrypted'
+        ? await (await createEncryptedBackupFile([account], first.settings, PASSWORD)).blob.text()
+        : JSON.stringify({ accounts: [account] });
+      const live = structuredClone(network.cloud);
+      await first.deleteAccount(account.id);
+      await first.syncNow();
+      const deleted = structuredClone(network.cloud);
+      if (delivery === 'live account then tombstone') Object.assign(network.cloud, live);
+
+      secondDevice.install();
+      const result = format === 'background'
+        ? await importTextIntoStoredVault(backup)
+        : format === 'encrypted'
+          ? await second.importEncryptedBackupText(backup, PASSWORD)
+          : await second.importText(backup);
+      expect(result.imported).toBe(1);
+      if (format === 'background') await second.initialize();
+      await second.syncNow();
+      if (delivery === 'live account then tombstone') {
+        Object.assign(network.cloud, deleted);
+        await second.syncNow();
+      }
+
+      expect(labels(second)).toEqual(['Restored account']);
+      expect(second.accounts[0].id).not.toBe(account.id);
+    });
   });
 
   test('a local password change preserves the sync key and other device passwords', async () => {

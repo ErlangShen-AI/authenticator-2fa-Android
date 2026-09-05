@@ -20,7 +20,8 @@ import {
   getVaultKeyFingerprint,
   importVaultKey,
   unlockVaultEnvelope,
-  unlockVaultEnvelopeWithKey
+  unlockVaultEnvelopeWithKey,
+  type UnlockedVault
 } from '../auth/vaultCrypto';
 import { createPlainVaultRecord, isEncryptedVaultRecord, isPlainVaultRecord } from '../auth/vaultRecords';
 import { importEncryptedBackup } from '../auth/backup';
@@ -370,53 +371,41 @@ export class AuthenticatorVault {
   }
 
   private async applyStoredVault(stored: StoredVault | null): Promise<void> {
+    let unlocked: UnlockedVault | null = null;
+    if (isEncryptedVaultRecord(stored)) {
+      try {
+        const sessionKey = await loadVaultSessionKey(getVaultKeyFingerprint(stored));
+        if (sessionKey) {
+          const key = await importVaultKey(sessionKey);
+          const result = await unlockVaultEnvelopeWithKey(stored, key);
+          unlocked = { key, data: normalizeVaultData(result.data) };
+        }
+      } catch {
+        this.applyVaultSnapshot(stored);
+        await clearVaultSessionKey();
+        return;
+      }
+    }
+    // Commit together after decryption, so a refresh cannot unmount active forms.
+    this.applyVaultSnapshot(stored, unlocked);
+  }
+
+  private applyVaultSnapshot(stored: StoredVault | null, unlocked: UnlockedVault | null = null): void {
     this.storedSnapshot = JSON.stringify(stored);
     this.browserSync = undefined;
     this.syncStatus = 'off';
     this.syncError = '';
-    this.key = null;
-    this.encryptedVault = null;
-    this.plainVault = null;
+    this.key = unlocked?.key ?? null;
+    this.encryptedVault = isEncryptedVaultRecord(stored) ? stored : null;
+    this.plainVault = isPlainVaultRecord(stored) ? stored : null;
     this.accounts = [];
     this.codes = {};
     this.settings = createDefaultAppSettings();
-    this.hasVault = Boolean(stored);
-    this.passwordProtected = false;
-    this.locked = false;
-
-    if (!stored) {
-      return;
-    }
-
-    if (isPlainVaultRecord(stored)) {
-      this.plainVault = stored;
-      this.applyUnlockedData(stored.data);
-      return;
-    }
-
-    if (!isEncryptedVaultRecord(stored)) {
-      this.hasVault = false;
-      return;
-    }
-
-    this.encryptedVault = stored;
-    this.passwordProtected = true;
-    this.locked = true;
-
-    const sessionKey = await loadVaultSessionKey(getVaultKeyFingerprint(stored));
-    if (!sessionKey) {
-      return;
-    }
-
-    try {
-      const key = await importVaultKey(sessionKey);
-      const unlocked = await unlockVaultEnvelopeWithKey(stored, key);
-      this.key = unlocked.key;
-      this.applyUnlockedData(unlocked.data);
-      this.locked = false;
-    } catch {
-      await clearVaultSessionKey();
-    }
+    this.hasVault = Boolean(this.encryptedVault || this.plainVault);
+    this.passwordProtected = Boolean(this.encryptedVault);
+    this.locked = this.passwordProtected && !unlocked;
+    const data = unlocked?.data ?? this.plainVault?.data;
+    if (data) this.applyUnlockedData(data);
   }
 
   private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -466,7 +455,7 @@ export class AuthenticatorVault {
     const merged = mergeImportedAccounts(
       this.accounts,
       incoming,
-      Object.keys(this.browserSync?.records ?? {})
+      this.browserSync
     );
     if (merged.imported === 0) {
       this.showNotice('No new accounts were imported.');
@@ -475,7 +464,8 @@ export class AuthenticatorVault {
 
     await this.persistData(
       { accounts: merged.accounts, settings: this.settings },
-      `${merged.imported} account${merged.imported === 1 ? '' : 's'} imported.`
+      `${merged.imported} account${merged.imported === 1 ? '' : 's'} imported.`,
+      merged.browserSync
     );
     await this.refreshCodes();
     return { imported: merged.imported, skipped: merged.skipped };

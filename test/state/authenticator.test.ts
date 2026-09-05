@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { loadStoredVault, saveStoredVault } from '../../src/lib/auth/storage';
+import { loadStoredVault, loadVaultSessionKey, saveStoredVault } from '../../src/lib/auth/storage';
 import {
   DEFAULT_SETTINGS,
   type AppSettings,
@@ -11,6 +11,7 @@ import {
   isPlainVaultRecord
 } from '../../src/lib/auth/vaultRecords';
 import { AuthenticatorVault } from '../../src/lib/state/authenticator.svelte';
+import * as vaultCrypto from '../../src/lib/auth/vaultCrypto';
 import { installMemoryStorage, installStructuredCloneChromeStorage } from '../helpers/storage';
 
 const OTPAUTH_URI = otpAuthUri('alice@example.com');
@@ -510,6 +511,55 @@ describe('AuthenticatorVault persistence and locking', () => {
 
     expect(vault.locked).toBe(true);
     expect(vault.codes).toEqual({});
+  });
+
+  test('refreshing an unlocked encrypted vault preserves the interface while decryption is pending', async () => {
+    const first = new AuthenticatorVault();
+    await first.initialize();
+    await first.importText(OTPAUTH_URI);
+    await first.changePassword('', PASSWORD);
+    const second = new AuthenticatorVault();
+    await second.initialize();
+    await second.updateSettings({ theme: 'dark' });
+
+    const decrypt = vaultCrypto.unlockVaultEnvelopeWithKey;
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const spy = vi.spyOn(vaultCrypto, 'unlockVaultEnvelopeWithKey').mockImplementation(async (...args) => {
+      entered.resolve();
+      await release.promise;
+      return decrypt(...args);
+    });
+    const accounts = first.accounts;
+    const refresh = first.syncNow();
+    await entered.promise;
+    const duringRefresh = { locked: first.locked, accounts: first.accounts, theme: first.settings.theme };
+    release.resolve();
+    await refresh;
+    spy.mockRestore();
+
+    expect(duringRefresh.locked).toBe(false);
+    expect(duringRefresh.accounts).toBe(accounts);
+    expect(duringRefresh.theme).toBe('system');
+    expect(first.settings.theme).toBe('dark');
+    expect(first.locked).toBe(false);
+  });
+
+  test('a failed encrypted refresh locks the vault and clears the previous unlocked data', async () => {
+    const vault = new AuthenticatorVault();
+    await vault.initialize();
+    await vault.importText(OTPAUTH_URI);
+    await vault.changePassword('', PASSWORD);
+    const stored = await loadStoredVault();
+    if (!isEncryptedVaultRecord(stored)) throw new Error('Expected an encrypted vault.');
+    await saveStoredVault({ ...stored, cipher: { ...stored.cipher, data: 'AAAA' } });
+
+    await vault.syncNow();
+
+    expect(vault.locked).toBe(true);
+    expect(vault.accounts).toEqual([]);
+    expect(vault.codes).toEqual({});
+    expect(await loadVaultSessionKey(vaultCrypto.getVaultKeyFingerprint(stored))).toBeNull();
   });
 
   test('manual lock clears the session unlock and requires the password again', async () => {
