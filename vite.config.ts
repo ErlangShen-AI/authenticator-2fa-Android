@@ -33,6 +33,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    fsModuleCache: true,
     include: ['test/**/*.test.ts'],
   },
 })
