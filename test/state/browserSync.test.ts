@@ -38,6 +38,39 @@ describe('Browser Sync vault integration', () => {
     expect(first.settings.hideCodes).toBe(true);
   });
 
+  test('preserves independently edited backup credentials with the same ID when joining', async () => {
+    const network = createBrowserSyncNetwork();
+    const firstDevice = network.createDevice();
+    const first = await createProtectedVault(firstDevice, ['Alice']);
+    const backup = JSON.stringify({ accounts: first.accounts });
+    const originalId = first.accounts[0].id;
+    const secondDevice = network.createDevice();
+    const second = await createProtectedVault(secondDevice);
+    await second.importText(backup);
+    expect(second.accounts[0].id).toBe(originalId);
+    const replacementSecret = 'KRUGS4ZANFZSAYJA';
+    await second.updateAccount(originalId, { secret: replacementSecret });
+
+    firstDevice.install();
+    const recoveryKey = generateSyncRecoveryKey();
+    await first.startBrowserSync(recoveryKey, false);
+    secondDevice.install();
+    await second.startBrowserSync(recoveryKey, true);
+
+    expect(second.syncStatus).toBe('ready');
+    expect(second.accounts.map((account) => account.secret).sort()).toEqual([SECRET, replacementSecret].sort());
+    expect(new Set(second.accounts.map((account) => account.id)).size).toBe(2);
+    const third = await createProtectedVault(network.createDevice());
+    await third.startBrowserSync(recoveryKey, true);
+    expect(third.accounts.map((account) => account.secret).sort()).toEqual([SECRET, replacementSecret].sort());
+
+    await third.deleteAccount(third.accounts.find((account) => account.secret === replacementSecret)!.id);
+    await third.syncNow();
+    firstDevice.install();
+    await first.syncNow();
+    expect(first.accounts).toEqual([expect.objectContaining({ id: originalId, secret: SECRET })]);
+  });
+
   test('keeps secrets and the recovery key out of sync storage and the local vault envelope', async () => {
     const network = createBrowserSyncNetwork();
     const device = network.createDevice();

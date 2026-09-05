@@ -1,6 +1,6 @@
 import {
   SYNC_PREFIX,
-  alignSyncAccounts,
+  joinSyncAccounts,
   createSyncMarker,
   decryptSyncRecord,
   encryptSyncRecord,
@@ -38,10 +38,7 @@ export async function connectBrowserSync(
   const records = await readRecords(recoveryKey, items);
   // Merged counters need a durable local revision before any contributing slot changes.
   const { state } = reconcileSyncAccounts({ recoveryKey, deviceId: crypto.randomUUID(), records: {} }, [], records);
-  return {
-    state,
-    accounts: alignSyncAccounts(localAccounts, Object.values(state.records))
-  };
+  return joinSyncAccounts(state, localAccounts);
 }
 
 /** The caller commits state/accounts locally before publishing, making retries durable. */

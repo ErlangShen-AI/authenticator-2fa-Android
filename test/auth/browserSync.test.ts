@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  alignSyncAccounts,
+  joinSyncAccounts,
   createSyncMarker,
   decryptSyncRecord,
   encryptSyncRecord,
@@ -361,33 +361,42 @@ describe('Browser Sync reconciliation', () => {
 
 describe('joining an existing Browser Sync group', () => {
   test('deduplicates matching accounts with different IDs and keeps remote account details', () => {
-    const local = { ...account, id: crypto.randomUUID(), label: account.label.toUpperCase(), createdAt: '2025-01-01T00:00:00.000Z' };
+    const local = { ...account, id: 'z-local', label: account.label.toUpperCase(), createdAt: '2025-01-01T00:00:00.000Z' };
     const distinct = createAccount({ label: 'Separate', secret: account.secret });
-    const aligned = alignSyncAccounts([local, distinct], [record]);
-    expect(aligned).toEqual([account, distinct]);
-    const result = reconcileSyncAccounts(state([record], DEVICE_B), aligned, [record]);
-    expect(result.writes).toHaveLength(1);
-    expect(result.writes[0].id).toBe(distinct.id);
+    const result = joinSyncAccounts(state([record], DEVICE_B), [local, distinct]);
+    expect(result.accounts).toEqual([account, distinct]);
+    expect(result.state.records[account.id].mergedIds).toContain(local.id);
+  });
+
+  test('does not link a conflicting alias to another matching remote credential', () => {
+    const original = { ...record, mergedIds: ['old-copy'] };
+    const otherAccount = { ...account, id: 'other', secret: 'KRUGS4ZANFZSAYJA' };
+    const other = { ...record, id: otherAccount.id, account: otherAccount };
+    const joined = joinSyncAccounts(state([original, other], DEVICE_B), [{ ...otherAccount, id: 'old-copy' }]);
+
+    expect(joined.accounts.map((item) => item.secret).sort()).toEqual([account.secret, otherAccount.secret].sort());
+    const deleted = reconcileSyncAccounts(joined.state, [account], []);
+    expect(deleted.accounts).toEqual([account]);
   });
 
   test('preserves a larger local HOTP counter while adopting the existing remote ID', () => {
     const remote = { ...record, account: { ...account, type: 'hotp' as const, counter: 5 } };
-    const local = { ...remote.account, id: crypto.randomUUID(), counter: 20 };
+    const local = { ...remote.account, id: 'z-local', counter: 20 };
     const before = structuredClone(remote);
-    const aligned = alignSyncAccounts([local], [remote]);
+    const { accounts: aligned } = joinSyncAccounts(state([remote], DEVICE_B), [local]);
     expect(aligned).toEqual([{ ...remote.account, counter: 20 }]);
     expect(remote).toEqual(before);
   });
 
   test('does not revive a previously deleted account on a device joining with an old backup', () => {
-    expect(alignSyncAccounts([account], [{ ...record, account: null }])).toEqual([]);
+    expect(joinSyncAccounts(state([{ ...record, account: null }]), [account]).accounts).toEqual([]);
   });
 
   test('adopts a known merged identity and respects its deletion even after a local rename', () => {
     const remote = { ...record, mergedIds: ['old-copy'] };
     const local = { ...account, id: 'old-copy', label: 'Local rename', sortOrder: 3 };
-    expect(alignSyncAccounts([local], [remote])).toEqual([{ ...account, sortOrder: 3 }]);
-    expect(alignSyncAccounts([local], [{ ...remote, account: null }])).toEqual([]);
+    expect(joinSyncAccounts(state([remote]), [local]).accounts).toEqual([{ ...account, sortOrder: 3 }]);
+    expect(joinSyncAccounts(state([{ ...remote, account: null }]), [local]).accounts).toEqual([]);
   });
 
   test('a deleted restoration cannot hide a live restoration that shares an earlier copy', () => {
@@ -396,7 +405,7 @@ describe('joining an existing Browser Sync group', () => {
     const deleted = { ...record, id: 'z-deleted', account: null, restorationId: 'z-deleted', mergedIds: ['old-copy', hotp.id] };
     for (const id of ['old-copy', hotp.id]) {
       const local = { ...hotp, id, counter: 100, sortOrder: 3 };
-      expect(alignSyncAccounts([local], [live, deleted])).toEqual([{ ...hotp, counter: 100, sortOrder: 3 }]);
+      expect(joinSyncAccounts(state([live, deleted]), [local]).accounts).toEqual([{ ...hotp, counter: 100, sortOrder: 3 }]);
     }
   });
 });

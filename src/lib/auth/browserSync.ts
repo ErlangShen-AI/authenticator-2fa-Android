@@ -195,31 +195,37 @@ function mergeRecordGroup(group: BrowserSyncRecord[]): BrowserSyncRecord {
   };
 }
 
-/** Joining keeps existing remote identities, while retaining distinct local accounts. */
-export function alignSyncAccounts(
-  localAccounts: readonly AuthenticatorAccount[],
-  remoteRecords: readonly BrowserSyncRecord[]
-): AuthenticatorAccount[] {
-  const remote = mergeSyncRecords(remoteRecords);
+/** Preserve independent credentials and retain the identities of joining copies. */
+export function joinSyncAccounts(state: BrowserSyncState, localAccounts: readonly AuthenticatorAccount[]) {
+  const remote = mergeSyncRecords(Object.values(state.records));
   const recordsById = indexSyncIdentities(remote);
   const accounts = remote.flatMap((record) => record.account ? [record.account] : []);
   const byFingerprint = new Map(accounts.map((account) => [accountFingerprint(account), account]));
   const byId = new Map(Array.from(recordsById).flatMap(([id, record]) => record.account ? [[id, record.account] as const] : []));
   for (const local of normalizeImportedAccounts(localAccounts)) {
     if (recordsById.get(local.id)?.account === null) continue;
-    const existing = byId.get(local.id) ?? byFingerprint.get(accountFingerprint(local));
+    const sameId = byId.get(local.id);
+    // Independent backups can reuse an ID for different credentials. Do not
+    // link that collision as an alias, or either account's deletion would win.
+    const joining = sameId && !sameCredentials(sameId, local) ? { ...local, id: crypto.randomUUID() } : local;
+    const existing = byId.get(joining.id) ?? byFingerprint.get(accountFingerprint(joining));
     if (existing) {
-      if (local.sortOrder !== undefined) existing.sortOrder = local.sortOrder;
-      if (existing.type === 'hotp' && local.type === 'hotp' && existing.secret === local.secret && existing.algorithm === local.algorithm) {
-        existing.counter = Math.max(existing.counter, local.counter);
+      if (joining.sortOrder !== undefined) existing.sortOrder = joining.sortOrder;
+      if (existing.type === 'hotp' && joining.type === 'hotp') {
+        existing.counter = Math.max(existing.counter, joining.counter);
       }
+      // Keep new copies until reconciliation records their aliases durably.
+      if (joining.id !== existing.id && recordsById.get(joining.id)?.id !== existing.id) {
+        accounts.push({ ...existing, id: joining.id });
+      }
+      byId.set(joining.id, existing);
       continue;
     }
-    accounts.push(local);
-    byId.set(local.id, local);
-    byFingerprint.set(accountFingerprint(local), local);
+    accounts.push(joining);
+    byId.set(joining.id, joining);
+    byFingerprint.set(accountFingerprint(joining), joining);
   }
-  return accounts;
+  return reconcileSyncAccounts(state, accounts, []);
 }
 
 /**
@@ -412,6 +418,11 @@ function accountFingerprint(account: AuthenticatorAccount): string {
     account.type, account.issuer.toLowerCase(), account.label.toLowerCase(), account.secret,
     account.algorithm, account.digits, account.period
   ]);
+}
+
+function sameCredentials(left: AuthenticatorAccount, right: AuthenticatorAccount): boolean {
+  return left.secret === right.secret && left.type === right.type && left.algorithm === right.algorithm &&
+    left.digits === right.digits && left.period === right.period;
 }
 
 function withoutLocalOrder(account: AuthenticatorAccount): AuthenticatorAccount {

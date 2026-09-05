@@ -77,20 +77,27 @@ describe('Browser Sync joining', () => {
     ]);
   });
 
-  test('publishes a larger local counter while keeping the remote identity', async () => {
+  test('publishes a larger local counter and keeps the joining identity deleted', async () => {
     const network = createBrowserSyncNetwork();
     network.createDevice().install();
     const recoveryKey = generateSyncRecoveryKey();
     const account = createAccount({ label: 'Counter', secret: 'JBSWY3DPEHPK3PXP', type: 'hotp', counter: 1 });
+    const local = { ...account, id: crypto.randomUUID(), counter: 100 };
     await seedGroup(network.cloud, recoveryKey, [{ id: account.id, revision: 1, deviceId: DEVICE_A, account }]);
 
-    const joined = await connectBrowserSync(recoveryKey, true, [{ ...account, id: crypto.randomUUID(), counter: 100 }]);
+    const joined = await connectBrowserSync(recoveryKey, true, [local]);
     const prepared = await prepareBrowserSync(joined.state, joined.accounts);
     await prepared.publish();
 
     expect((await connectBrowserSync(recoveryKey, true, [])).accounts).toEqual([
-      expect.objectContaining({ id: account.id, counter: 100 })
+      expect.objectContaining({ id: [account.id, local.id].sort()[0], counter: 100 })
     ]);
+
+    const deleted = await prepareBrowserSync(prepared.state, []);
+    await deleted.publish();
+    await seedRecords(network.cloud, recoveryKey, [{ id: local.id, revision: 1, deviceId: DEVICE_B, account: local }]);
+
+    expect((await connectBrowserSync(recoveryKey, true, [])).accounts).toEqual([]);
   });
 
   test('does not republish a counter already present in the winning remote record', async () => {
