@@ -15,6 +15,7 @@
   import BrowserSyncPanel from './BrowserSyncPanel.svelte';
   import Toast from './Toast.svelte';
   import ViewHeader from './ViewHeader.svelte';
+  import { pushBackLayer } from './backLayer';
   import { FADE_TRANSITION, panelReveal, viewTransition } from './transitions';
   import { getSyncStatusKey, getSyncStatusTone, SYNC_STATUS_DOT } from './syncStatus';
   import { authenticatorVault as vault } from '../../state/authenticator.svelte';
@@ -197,6 +198,16 @@
       securitySaving = false;
     }
   }
+
+  // The back gesture closes the transfer and sync screens before settings.
+  $effect(() => {
+    if (!showTransfer) return;
+    return pushBackLayer(() => (showTransfer = false));
+  });
+  $effect(() => {
+    if (!showSync) return;
+    return pushBackLayer(() => (showSync = false));
+  });
 </script>
 
 <!-- The transfer screen covers this view, so settings stay out of the tab order

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import { pushBackLayer } from './backLayer';
   import {
     modalScrim,
     modalSurface,
@@ -35,6 +36,11 @@
     event.preventDefault();
     onclose();
   }
+
+  // Let the back gesture close this dialog before it can leave the page.
+  $effect(() => {
+    return pushBackLayer(() => onclose());
+  });
 </script>
 
 <svelte:window onkeydown={closeFromEscape} />

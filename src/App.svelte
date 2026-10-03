@@ -36,8 +36,10 @@
     moveItem,
     rubberbandOffset
   } from './lib/components/auth/reorder';
+  import { pushBackLayer } from './lib/components/auth/backLayer';
   import { getImportFailureMessage } from './lib/components/auth/importFeedback';
   import { AccountChangedError, getErrorMessage } from './lib/auth/errors';
+  import { writeClipboardText } from './lib/auth/clipboard';
   import { accountToOtpAuthUri } from './lib/auth/otpauth';
   import {
     getAccountListView,
@@ -160,7 +162,7 @@
   }
 
   function showCodes(event?: MouseEvent) {
-    animateViewTransition = Boolean(event && event.detail > 0);
+    animateViewTransition = event ? event.detail > 0 : true;
     view = 'codes';
   }
 
@@ -233,6 +235,12 @@
         delete element.dataset.theme;
       }
     }
+  });
+
+  // The back gesture leaves settings instead of closing the whole window.
+  $effect(() => {
+    if (view !== 'settings') return;
+    return pushBackLayer(showCodes);
   });
 
   // Auto-dismiss transient status messages so they never pile up on screen.
@@ -387,7 +395,7 @@
   async function copyCode(value: string) {
     vault.error = '';
     try {
-      await navigator.clipboard.writeText(value);
+      await writeClipboardText(value);
     } catch (error) {
       vault.error = getErrorMessage(error, tr('copyFailed'));
       return;
@@ -1049,7 +1057,7 @@
               <div class="auth-sticky-search sticky top-0 z-10 bg-base-100/95 px-3 py-2 backdrop-blur">
                 <label class="auth-search-input input input-md w-full items-center gap-2">
                   <Search class="shrink-0 text-base-content/45" size={18} aria-hidden="true" />
-                  <input class="grow text-base" type="search" placeholder={tr('search')} bind:value={query} />
+                  <input class="grow text-base" type="search" placeholder={tr('search')} enterkeyhint="search" bind:value={query} />
                 </label>
               </div>
             {/if}
@@ -1123,7 +1131,7 @@
 
           {#if vault.accounts.length > 0}
             <button
-              class="btn btn-circle btn-primary btn-lg absolute bottom-4 right-4 z-20 shadow-lg"
+              class="btn btn-circle btn-primary btn-lg absolute auth-fab z-20 shadow-lg"
               type="button"
               aria-label={tr('addAccount')}
               title={tr('addAccount')}

@@ -30,6 +30,7 @@
   import { FADE_TRANSITION, PANEL_TRANSITION, panelReveal } from './transitions';
   import { getSyncStatusKey, getSyncStatusTone, SYNC_STATUS_DOT } from './syncStatus';
   import { generateSyncRecoveryKey, parseSyncRecoveryKey } from '../../auth/browserSync';
+  import { writeClipboardText } from '../../auth/clipboard';
   import { authenticatorVault as vault } from '../../state/authenticator.svelte';
   import { tr, type MessageKey } from '../../i18n/messages';
 
@@ -130,7 +131,7 @@
   async function copyKey(key: string) {
     localError = null;
     try {
-      await navigator.clipboard.writeText(key);
+      await writeClipboardText(key);
       setCopied(true);
     } catch {
       localError = 'syncKeyCopyFailed';

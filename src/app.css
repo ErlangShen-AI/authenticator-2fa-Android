@@ -106,6 +106,7 @@ body,
   height: max(var(--auth-popup-height), 100dvh);
   min-height: var(--auth-popup-height);
   margin: 0;
+  overscroll-behavior: none;
   background: var(--color-base-100);
   transition:
     background-color 180ms ease,
@@ -214,6 +215,21 @@ select:not(:disabled),
 
 .auth-scroll-area {
   scrollbar-gutter: stable;
+}
+
+/* Scrollable panes keep their own overscroll so gestures never chain. */
+[class~='overflow-y-auto'] {
+  overscroll-behavior: contain;
+}
+
+/* Floating controls stay clear of the on-screen gesture areas. */
+.auth-fab {
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  right: calc(1rem + env(safe-area-inset-right, 0px));
+}
+
+.auth-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .auth-search-input.input {

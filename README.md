@@ -44,6 +44,8 @@ This repository targets extension-capable Android browsers (for example Firefox 
 
 - The extension surface follows the viewport on touch devices: screens narrower than 400px or shorter than 532px get a fully fitted layout instead of the desktop minimum. Desktop windows keep the original 400x532 minimum.
 - The default tap highlight is disabled, so taps and long presses on controls leave no highlight overlay.
+- The Android back gesture closes dialogs and panels instead of leaving the page, and scrolling never chains into page-level overscroll.
+- Floating controls respect display cutouts and on-screen gesture areas via safe-area insets.
 - The `firefox` build declares `browser_specific_settings.gecko_android`, so the add-on can be submitted to AMO for Android.
 
 Known mobile limitations:
