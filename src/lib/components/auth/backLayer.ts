@@ -1,32 +1,39 @@
 interface BackLayer {
+  token: number;
   close: () => void;
 }
 
 const layers: BackLayer[] = [];
+let nextToken = 0;
 let installed = false;
-let consumedPops = 0;
+
+function currentToken(): number | undefined {
+  const state = window.history.state as { authBackToken?: number } | null;
+  return state?.authBackToken;
+}
 
 function install(): void {
-  if (installed) {
+  if (installed || typeof window === 'undefined') {
     return;
   }
   installed = true;
   window.addEventListener('popstate', () => {
-    // A pop consumed by an explicit close belongs to that close, not to the
-    // user's back gesture.
-    if (consumedPops > 0) {
-      consumedPops -= 1;
+    const layer = layers[layers.length - 1];
+    // Landing back on the top layer's own entry means nothing left the stack.
+    if (!layer || currentToken() === layer.token) {
       return;
     }
-    layers.pop()?.close();
+    layers.pop();
+    layer.close();
   });
 }
 
 /**
  * Treats the browser back gesture as "close the topmost overlay". Each push
- * adds one history entry; the returned release function removes the layer and
- * consumes its entry while the layer still owns it. Without open layers the
- * back gesture keeps its normal meaning, so users can still leave the page.
+ * marks its history entry with a token; the returned release function removes
+ * the layer and consumes its entry while the entry is still current. Without
+ * open layers the back gesture keeps its normal meaning, so users can still
+ * leave the page.
  */
 export function pushBackLayer(close: () => void): () => void {
   if (typeof window === 'undefined') {
@@ -34,9 +41,9 @@ export function pushBackLayer(close: () => void): () => void {
   }
 
   install();
-  const layer: BackLayer = { close };
+  const layer: BackLayer = { token: ++nextToken, close };
   layers.push(layer);
-  window.history.pushState({ authBackLayer: true }, '');
+  window.history.pushState({ authBackToken: layer.token }, '');
 
   return () => {
     const index = layers.indexOf(layer);
@@ -44,8 +51,7 @@ export function pushBackLayer(close: () => void): () => void {
       return;
     }
     layers.splice(index, 1);
-    if (index === layers.length && window.history.state?.authBackLayer) {
-      consumedPops += 1;
+    if (index === layers.length && currentToken() === layer.token) {
       window.history.back();
     }
   };
