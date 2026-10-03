@@ -137,6 +137,23 @@ body,
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Controls respond on touch-down without paying the double-tap delay. */
+button,
+a,
+select,
+label,
+.toggle,
+.file-input {
+  touch-action: manipulation;
+}
+
+/* Long presses on controls must not select or drag their labels. */
+button,
+.btn {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 body {
   overflow: hidden;
   color: var(--color-base-content);
