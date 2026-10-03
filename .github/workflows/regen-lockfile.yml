@@ -1,0 +1,46 @@
+name: Regen lockfile
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  regen:
+    name: Regenerate package-lock.json
+    runs-on: ubuntu-latest
+    env:
+      # Keep git init output free of default-branch hints.
+      GIT_CONFIG_COUNT: 1
+      GIT_CONFIG_KEY_0: init.defaultBranch
+      GIT_CONFIG_VALUE_0: main
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Remove @sveltejs/mcp dev dependency
+        run: |
+          jq 'del(.devDependencies["@sveltejs/mcp"])' package.json > package.json.next
+          mv package.json.next package.json
+
+      - name: Regenerate lockfile
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Validate lockfile
+        run: npm ci --ignore-scripts
+
+      - name: Push regen branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c regen-lockfile
+          git add package.json package-lock.json
+          git commit -m "drop @sveltejs/mcp dev dependency"
+          git push origin regen-lockfile
