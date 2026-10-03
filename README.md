@@ -46,6 +46,7 @@ This repository targets extension-capable Android browsers (for example Firefox 
 - The default tap highlight is disabled, so taps and long presses on controls leave no highlight overlay.
 - The Android back gesture closes dialogs and panels instead of leaving the page, and scrolling never chains into page-level overscroll.
 - Floating controls respect display cutouts and on-screen gesture areas via safe-area insets.
+- Copying a code gives a short haptic tick on devices that support vibration.
 - The `firefox` build declares `browser_specific_settings.gecko_android`, so the add-on can be submitted to AMO for Android.
 
 Known mobile limitations:
@@ -90,7 +91,7 @@ Temporary store listing text drafts can live in `.tmp/store-listing/`, which is 
 
 ## Releases
 
-Pushing a tag like `v1.2.3` runs the release workflow: it applies the tag version, builds all targets, packages the zips, creates the GitHub release, and attaches the extension zips. Pushes to `main` run the Build workflow, which runs checks and tests and uploads the same zips as a build artifact.
+Every successful push to `main` creates or updates the GitHub release for the current `package.json` version (`vX.Y.Z`) and attaches the `chrome`, `edge`, and `firefox` zips; a rebuild of the same version replaces the attached files. To start a new version, bump `version` in `package.json` and push to `main`. Pushing a `vX.Y.Z` tag still runs the release workflow, which applies the tag version before building.
 
 ## Origins
 
