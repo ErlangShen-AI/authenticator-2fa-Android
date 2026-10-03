@@ -112,6 +112,30 @@ body,
     color 180ms ease;
 }
 
+/* Touch devices below the desktop minimum size follow the viewport. */
+@media (pointer: coarse) and (hover: none) and (max-width: 399px) {
+  html,
+  body,
+  #app {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+@media (pointer: coarse) and (hover: none) and (max-height: 531px) {
+  html,
+  body,
+  #app {
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+  }
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
 body {
   overflow: hidden;
   color: var(--color-base-content);

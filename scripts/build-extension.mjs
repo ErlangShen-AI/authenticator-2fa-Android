@@ -73,6 +73,7 @@ function createManifest(target) {
           required: ['none'],
         },
       },
+      gecko_android: {},
     };
     manifest.background = {
       scripts: ['assets/background.js'],
