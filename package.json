@@ -25,7 +25,6 @@
     "zxing-wasm": "^3.1.0"
   },
   "devDependencies": {
-    "@sveltejs/mcp": "^0.1.25",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@tailwindcss/vite": "^4.3.1",
     "@tsconfig/svelte": "^5.0.2",
