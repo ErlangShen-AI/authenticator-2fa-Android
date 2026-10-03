@@ -1067,7 +1067,7 @@
 
             {#if filteredAccounts.length > 0}
               <ul
-                class="divide-y divide-base-200"
+                class="divide-y divide-base-200/60"
                 aria-label={tr('accounts')}
                 bind:this={accountListElement}
               >
@@ -1102,7 +1102,7 @@
                 <div id="other-codes">
                   {#if codesRevealed}
                     <ul
-                      class="divide-y divide-base-200"
+                      class="divide-y divide-base-200/60"
                       aria-label={tr('otherCodes')}
                       transition:panelReveal
                     >
@@ -1114,7 +1114,7 @@
             {:else if vault.accounts.length === 0}
               <div class="grid grow place-items-center p-8 text-center">
                 <div class="grid justify-items-center gap-3">
-                  <div class="grid size-16 place-items-center rounded-2xl bg-base-200 text-base-content/40">
+                  <div class="grid size-16 place-items-center rounded-2xl bg-base-200 text-base-content/45 ring-1 ring-base-300/50">
                     <KeyRound size={30} aria-hidden="true" />
                   </div>
                   <div class="grid gap-1">

@@ -91,7 +91,7 @@
   {#if suggestedForSite}
     <span
       class={[
-        'pointer-events-none absolute left-0 top-1/2 z-10 h-7 w-0.75 -translate-y-1/2 rounded-r-full transition-colors',
+        'pointer-events-none absolute left-0 top-1/2 z-10 h-8 w-1 -translate-y-1/2 rounded-r-full transition-colors',
         expiring ? 'bg-error' : 'bg-primary'
       ]}
       aria-hidden="true"
@@ -124,7 +124,7 @@
 
   <button
     class={[
-      'auth-code-action flex min-w-0 grow items-center gap-3 py-[0.6rem] text-left hover:bg-base-200/70 focus-visible:bg-base-200/70 focus:outline-none',
+      'auth-code-action flex min-w-0 grow items-center gap-3 py-3 text-left hover:bg-base-200/70 focus-visible:bg-base-200/70 focus:outline-none',
       showReorder ? 'px-2' : 'pl-4 pr-2',
       value ? 'cursor-pointer' : 'cursor-default'
     ]}
@@ -143,7 +143,7 @@
       </span>
       <span
         class={[
-          'auth-code-value font-(family-name:--auth-code-font) text-[2.35rem] font-[450] leading-[0.95] mt-[0.3rem] tracking-normal lining-nums tabular-nums',
+          'auth-code-value font-(family-name:--auth-code-font) text-[2.35rem] font-[450] leading-[0.95] mt-[0.3rem] tracking-[-0.01em] lining-nums tabular-nums',
           vault.settings.hideCodes ? 'text-base-content/35' : expiring ? 'text-error' : 'text-primary'
         ]}
       >

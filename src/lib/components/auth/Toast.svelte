@@ -160,7 +160,7 @@
   <div class="toast toast-center toast-bottom auth-safe-bottom pointer-events-none z-30 mb-2">
     <div
       bind:this={el}
-      class="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium shadow-lg ring-1 ring-black/5 {shown.variant ===
+      class="flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium shadow-xl shadow-black/25 ring-1 ring-black/10 {shown.variant ===
       'error'
         ? 'bg-error text-error-content'
         : 'bg-primary text-primary-content'}"

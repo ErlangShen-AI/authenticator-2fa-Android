@@ -253,6 +253,9 @@ select:not(:disabled),
 .auth-fab {
   bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
   right: calc(1rem + env(safe-area-inset-right, 0px));
+  box-shadow:
+    0 10px 24px -8px rgb(0 0 0 / 0.32),
+    0 4px 10px -4px rgb(0 0 0 / 0.18);
 }
 
 .auth-safe-bottom {
@@ -260,6 +263,7 @@ select:not(:disabled),
 }
 
 .auth-search-input.input {
+  border-radius: 9999px;
   border-color: transparent;
   background-color: color-mix(in oklab, var(--color-base-200) 55%, var(--color-base-100));
 }
@@ -348,4 +352,8 @@ select:not(:disabled),
     background-color: var(--color-base-100);
     backdrop-filter: none;
   }
+}
+
+::selection {
+  background-color: color-mix(in oklab, var(--color-primary) 24%, transparent);
 }

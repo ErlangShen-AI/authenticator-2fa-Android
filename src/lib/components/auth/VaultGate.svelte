@@ -42,7 +42,7 @@
 <section class="grid h-full place-items-center p-6">
   <div class="grid w-full max-w-xs gap-6">
     <div class="grid justify-items-center gap-3 text-center">
-      <div class="grid size-16 place-items-center rounded-2xl bg-primary text-primary-content shadow-md">
+      <div class="grid size-16 place-items-center rounded-2xl bg-gradient-to-b from-primary to-primary/85 text-primary-content shadow-lg shadow-primary/25 ring-1 ring-black/5">
         {#if hasVault}
           <LockKeyhole size={32} aria-hidden="true" />
         {:else}
