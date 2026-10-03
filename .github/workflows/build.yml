@@ -17,6 +17,11 @@ jobs:
   build:
     name: Build extension zips
     runs-on: ubuntu-latest
+    env:
+      # Keep git init output free of default-branch hints.
+      GIT_CONFIG_COUNT: 1
+      GIT_CONFIG_KEY_0: init.defaultBranch
+      GIT_CONFIG_VALUE_0: main
 
     steps:
       - name: Checkout

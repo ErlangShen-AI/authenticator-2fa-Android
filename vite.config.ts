@@ -5,8 +5,8 @@ import tailwindcss from '@tailwindcss/vite'
 import { normalizePath, type Plugin } from 'vite'
 
 const contentScriptEntries = {
-  codePaster: resolve(__dirname, 'src/content/codePaster.ts'),
-  pageScanner: resolve(__dirname, 'src/content/pageScanner.ts'),
+  codePaster: resolve(import.meta.dirname, 'src/content/codePaster.ts'),
+  pageScanner: resolve(import.meta.dirname, 'src/content/pageScanner.ts'),
 }
 const wrappedContentScriptEntryIds = new Set(Object.values(contentScriptEntries).map(normalizePath))
 
@@ -18,10 +18,14 @@ export default defineConfig({
     modulePreload: false,
     outDir: 'dist/app',
     emptyOutDir: true,
-    rollupOptions: {
+    // The UI ships as a single bundle loaded from local extension files.
+    chunkSizeWarningLimit: 700,
+    rolldownOptions: {
+      // Svelte compilation dominates this build; the plugin timing report is off.
+      checks: { pluginTimings: false },
       input: {
-        index: resolve(__dirname, 'index.html'),
-        background: resolve(__dirname, 'src/background.ts'),
+        index: resolve(import.meta.dirname, 'index.html'),
+        background: resolve(import.meta.dirname, 'src/background.ts'),
         ...contentScriptEntries,
       },
       output: {
