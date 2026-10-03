@@ -22,7 +22,6 @@
     surfaceClass = '',
     closeLabel
   }: Props = $props();
-  let outroing = false;
 
   function closeFromCancel(event: Event) {
     event.preventDefault();
@@ -30,7 +29,7 @@
   }
 
   function closeFromEscape(event: KeyboardEvent) {
-    if (outroing || event.key !== 'Escape' || event.defaultPrevented) {
+    if (event.key !== 'Escape' || event.defaultPrevented) {
       return;
     }
     event.preventDefault();
@@ -52,8 +51,7 @@
 >
   <div
     class={['modal-box motion-dialog-surface', surfaceClass]}
-    transition:modalSurface|global={{ placement }}
-    onoutrostart={() => (outroing = true)}
+    in:modalSurface|global={{ placement }}
   >
     {#if placement === 'sheet'}
       <div class="auth-sheet-grabber" aria-hidden="true"></div>
@@ -65,7 +63,7 @@
     type="button"
     aria-label={closeLabel}
     onclick={onclose}
-    transition:modalScrim|global
+    in:modalScrim|global
   ></button>
 </dialog>
 

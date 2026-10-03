@@ -1039,14 +1039,14 @@
       {#if view === 'settings'}
         <div
           class="absolute inset-0 z-10 flex min-h-0 flex-col overflow-hidden bg-base-100"
-          transition:viewTransition={{ x: 20, instant: !animateViewTransition }}
+          in:viewTransition={{ x: 20, instant: !animateViewTransition }}
         >
           <SettingsView onback={showCodes} oncontextualsortchange={setContextualSorting} />
         </div>
       {:else}
         <div
           class="absolute inset-0 flex min-h-0 flex-col overflow-hidden bg-base-100"
-          transition:viewTransition={{ x: -20, instant: !animateViewTransition }}
+          in:viewTransition={{ x: -20, instant: !animateViewTransition }}
         >
           <AppBar onsettings={showSettings} />
 

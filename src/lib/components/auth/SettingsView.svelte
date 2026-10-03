@@ -503,7 +503,7 @@
 />
 
 {#if showTransfer}
-  <div class="fixed inset-0 z-30 bg-base-100" transition:viewTransition={{ x: 20 }}>
+  <div class="fixed inset-0 z-30 bg-base-100" in:viewTransition={{ x: 20 }}>
     <ImportExportPanel
       accounts={vault.accounts}
       settings={vault.settings}
@@ -515,7 +515,7 @@
 {/if}
 
 {#if showSync}
-  <div class="fixed inset-0 z-30 bg-base-100" transition:viewTransition={{ x: 20 }}>
+  <div class="fixed inset-0 z-30 bg-base-100" in:viewTransition={{ x: 20 }}>
     <BrowserSyncPanel onclose={() => (showSync = false)} onprotect={protectForSync} />
   </div>
 {/if}
