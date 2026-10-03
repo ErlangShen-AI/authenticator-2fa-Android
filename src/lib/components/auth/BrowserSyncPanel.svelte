@@ -31,6 +31,7 @@
   import { getSyncStatusKey, getSyncStatusTone, SYNC_STATUS_DOT } from './syncStatus';
   import { generateSyncRecoveryKey, parseSyncRecoveryKey } from '../../auth/browserSync';
   import { writeClipboardText } from '../../auth/clipboard';
+  import { tapHaptic } from '../../auth/haptics';
   import { authenticatorVault as vault } from '../../state/authenticator.svelte';
   import { tr, type MessageKey } from '../../i18n/messages';
 
@@ -133,6 +134,7 @@
     try {
       await writeClipboardText(key);
       setCopied(true);
+      tapHaptic();
     } catch {
       localError = 'syncKeyCopyFailed';
     }

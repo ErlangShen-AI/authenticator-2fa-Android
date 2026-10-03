@@ -107,6 +107,8 @@ body,
   min-height: var(--auth-popup-height);
   margin: 0;
   overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
   background: var(--color-base-100);
   transition:
     background-color 180ms ease,
@@ -152,6 +154,14 @@ button,
 .btn {
   -webkit-user-select: none;
   user-select: none;
+}
+
+/* Small icon buttons grow to a comfortable touch target. */
+@media (pointer: coarse) {
+  .btn-circle.btn-sm,
+  .btn-square.btn-sm {
+    --size: calc(var(--size-field, 0.25rem) * 10);
+  }
 }
 
 body {

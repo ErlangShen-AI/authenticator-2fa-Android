@@ -40,6 +40,7 @@
   import { getImportFailureMessage } from './lib/components/auth/importFeedback';
   import { AccountChangedError, getErrorMessage } from './lib/auth/errors';
   import { writeClipboardText } from './lib/auth/clipboard';
+  import { tapHaptic } from './lib/auth/haptics';
   import { accountToOtpAuthUri } from './lib/auth/otpauth';
   import {
     getAccountListView,
@@ -400,6 +401,8 @@
       vault.error = getErrorMessage(error, tr('copyFailed'));
       return;
     }
+
+    tapHaptic();
 
     if (!vault.settings.autoPasteCodes) {
       vault.showNotice(tr('copied'));

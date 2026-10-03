@@ -85,6 +85,7 @@
 
   .modal-bottom .motion-dialog-surface {
     transform-origin: bottom center;
+    padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
   }
 
   .motion-dialog-scrim.modal-backdrop {
