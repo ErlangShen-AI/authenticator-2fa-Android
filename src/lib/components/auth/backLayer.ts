@@ -5,6 +5,7 @@ interface BackLayer {
 
 const layers: BackLayer[] = [];
 let nextToken = 0;
+let pendingBack: BackLayer | null = null;
 let installed = false;
 
 function currentToken(): number | undefined {
@@ -43,7 +44,15 @@ export function pushBackLayer(close: () => void): () => void {
   install();
   const layer: BackLayer = { token: ++nextToken, close };
   layers.push(layer);
-  window.history.pushState({ authBackToken: layer.token }, '');
+
+  // An overlay replacing another in the same update takes over the entry the
+  // outgoing overlay releases, so the stack keeps one entry per visible layer.
+  if (pendingBack !== null && currentToken() === pendingBack.token) {
+    pendingBack = null;
+    window.history.replaceState({ authBackToken: layer.token }, '');
+  } else {
+    window.history.pushState({ authBackToken: layer.token }, '');
+  }
 
   return () => {
     const index = layers.indexOf(layer);
@@ -51,8 +60,20 @@ export function pushBackLayer(close: () => void): () => void {
       return;
     }
     layers.splice(index, 1);
-    if (index === layers.length && currentToken() === layer.token) {
-      window.history.back();
+    if (index !== layers.length || currentToken() !== layer.token) {
+      return;
     }
+    // The traversal is deferred so an overlay opening in the same update can
+    // take over this entry instead of being closed by its popstate.
+    pendingBack = layer;
+    queueMicrotask(() => {
+      if (pendingBack !== layer) {
+        return;
+      }
+      pendingBack = null;
+      if (currentToken() === layer.token) {
+        window.history.back();
+      }
+    });
   };
 }
