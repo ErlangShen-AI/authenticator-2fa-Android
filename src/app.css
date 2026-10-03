@@ -65,8 +65,8 @@
   --color-error: oklch(70% 0.16 25);
   --color-error-content: oklch(16% 0.025 25);
   --radius-selector: .5rem;
-  --radius-field: .25rem;
-  --radius-box: .5rem;
+  --radius-field: .625rem;
+  --radius-box: .875rem;
   --size-selector: .25rem;
   --size-field: .25rem;
   --border: 1px;
