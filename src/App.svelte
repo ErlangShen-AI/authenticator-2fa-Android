@@ -54,19 +54,12 @@
 
   type View = 'codes' | 'settings';
   type AddMode = 'qr' | 'manual' | 'paste';
-  type PageScanState = 'idle' | 'starting' | 'waiting';
 
   interface RuntimeResponse {
     ok?: boolean;
     error?: string;
     pasted?: boolean;
     pageContext?: PageContext | null;
-  }
-
-  interface PageScanCompletedMessage {
-    type: 'page-scan:completed';
-    ok: boolean;
-    message: string;
   }
 
   interface ActivePageContextChangedMessage {
@@ -126,9 +119,6 @@
   let addBusy = $state(false);
   let addStatus = $state('');
   let addError = $state('');
-  let pageScanState = $state<PageScanState>('idle');
-  let pageScanMessage = $state('');
-  let pageScanError = $state('');
   let pageContext = $state.raw<PageContext | null>(null);
   let pageContextReady = $state(false);
   let allCodesRevealed = $state(false);
@@ -153,7 +143,6 @@
     !manualSort || query.trim().length > 0 || filteredAccounts.length < 2
   );
   const activeDragAccountId = $derived(dragState?.accountId ?? keyboardDraggingAccountId);
-  const pageScanBusy = $derived(pageScanState !== 'idle');
   const themeOverride = $derived(vault.settings.theme === 'system' ? undefined : vault.settings.theme);
 
   function showSettings(event: MouseEvent) {
@@ -173,9 +162,7 @@
     const timer = window.setInterval(() => void vault.refreshCodes(), 1000);
 
     const listener = (message: unknown) => {
-      if (isPageScanCompleted(message)) {
-        void handlePageScanCompleted(message);
-      } else if (
+      if (
         isActivePageContextChanged(message) &&
         !manualSort &&
         (browserWindowId === undefined || message.windowId === browserWindowId)
@@ -361,8 +348,6 @@
     formError = '';
     addStatus = '';
     addError = '';
-    pageScanMessage = '';
-    pageScanError = '';
   }
 
   async function saveNewAccount(draft: AccountDraft) {
@@ -458,7 +443,6 @@
   async function runAddImport(action: () => Promise<ImportResult>, afterSuccess?: () => void) {
     addBusy = true;
     addError = '';
-    pageScanError = '';
     addStatus = tr('importing');
     try {
       const result = await action();
@@ -480,43 +464,6 @@
     }
   }
 
-  async function startPageScan() {
-    showAdd = true;
-    addMode = 'qr';
-    pageScanMessage = '';
-    pageScanError = '';
-    addError = '';
-    vault.error = '';
-
-    if (!hasRuntimeMessaging()) {
-      pageScanError = tr('scanPageUnavailable');
-      return;
-    }
-
-    pageScanState = 'starting';
-    try {
-      await sendRuntimeMessage({ type: 'start-page-scan' });
-      pageScanState = 'waiting';
-      pageScanMessage = '';
-      showAdd = false;
-      view = 'codes';
-      closeExtensionWindow();
-    } catch (error) {
-      pageScanState = 'idle';
-      pageScanError = getErrorMessage(error, tr('scanPageFailed'));
-    }
-  }
-
-  function closeExtensionWindow(): void {
-    if (!/^(chrome|moz)-extension:$/.test(window.location.protocol)) {
-      return;
-    }
-
-    setTimeout(() => {
-      window.close();
-    }, 0);
-  }
-
   function hasRuntimeMessaging(): boolean {
     return typeof chrome !== 'undefined' && Boolean(chrome.runtime?.onMessage);
   }
@@ -528,7 +475,7 @@
         if (errorMessage) {
           reject(new Error(errorMessage));
         } else if (response?.ok === false) {
-          reject(new Error(response.error ?? tr('scanPageFailed')));
+          reject(new Error(response.error ?? 'Request failed.'));
         } else {
           resolve(response ?? { ok: true });
         }
@@ -546,16 +493,6 @@
         resolve(chrome.runtime.lastError ? undefined : currentWindow.id);
       });
     });
-  }
-
-  function isPageScanCompleted(message: unknown): message is PageScanCompletedMessage {
-    return (
-      typeof message === 'object' &&
-      message !== null &&
-      (message as { type?: unknown }).type === 'page-scan:completed' &&
-      typeof (message as { ok?: unknown }).ok === 'boolean' &&
-      typeof (message as { message?: unknown }).message === 'string'
-    );
   }
 
   function isActivePageContextChanged(
@@ -587,31 +524,6 @@
       hostname: context.hostname,
       ...(typeof context.title === 'string' ? { title: context.title.slice(0, 512) } : {})
     };
-  }
-
-  async function handlePageScanCompleted(message: PageScanCompletedMessage) {
-    pageScanState = 'idle';
-    pageScanMessage = '';
-    if (!message.ok) {
-      const failure = message.message || tr('scanPageFailed');
-      // Surface the error in exactly one place: inside the add modal when it
-      // is open, otherwise as the global toast. Setting both would render the
-      // same message twice (in the modal and faded behind it).
-      if (showAdd) {
-        pageScanError = failure;
-        vault.error = '';
-      } else {
-        pageScanError = '';
-        vault.error = failure;
-      }
-      return;
-    }
-
-    pageScanError = '';
-    showAdd = false;
-    view = 'codes';
-    await vault.initialize();
-    await refreshPageContext();
   }
 
   async function deleteSelected() {
@@ -1031,9 +943,6 @@
     {#if vault.error}
       <p class="px-6 pb-4 text-center text-sm text-error" transition:fade={FADE_TRANSITION} role="alert">{vault.error}</p>
     {/if}
-    {#if pageScanError}
-      <p class="px-6 pb-4 text-center text-sm text-error" transition:fade={FADE_TRANSITION} role="alert">{pageScanError}</p>
-    {/if}
   {:else}
     <section class="vault-unlocked absolute inset-0 flex min-h-0 flex-col overflow-hidden">
       {#if view === 'settings'}
@@ -1248,11 +1157,6 @@
       <div class="mt-4 grid gap-3" in:fade={PANEL_TRANSITION}>
         <p class="text-sm leading-snug text-base-content/60">{tr('addQrDescription')}</p>
 
-        <button class="btn btn-primary btn-block" type="button" onclick={startPageScan} disabled={pageScanBusy || addBusy}>
-          <ScanLine size={16} aria-hidden="true" />
-          {pageScanState === 'starting' ? tr('scanPage') : tr('scanPageStart')}
-        </button>
-
         <label class="grid gap-1 text-sm font-medium">
           <span class="flex items-center gap-2">
             <ImageUp size={16} aria-hidden="true" />
@@ -1268,12 +1172,6 @@
           />
         </label>
 
-        {#if pageScanMessage}
-          <div class="alert alert-info py-2 text-sm" transition:fade={FADE_TRANSITION} role="status">{pageScanMessage}</div>
-        {/if}
-        {#if pageScanError}
-          <div class="alert alert-error py-2 text-sm" transition:fade={FADE_TRANSITION} role="alert">{pageScanError}</div>
-        {/if}
         {#if addStatus}
           <div class="alert alert-info py-2 text-sm" transition:fade={FADE_TRANSITION} role="status">{addStatus}</div>
         {/if}

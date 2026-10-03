@@ -1,7 +1,4 @@
-import { decodeQrDataUrlInWorker, isPageScanCaptureRect } from './lib/auth/qrWorker';
 import type { PageContext } from './lib/auth/accountRanking';
-import type { PageScanCaptureRect } from './lib/auth/pageScanSelection';
-import { getImportResultMessage, importTextIntoStoredVault } from './lib/auth/vaultImport';
 import { installBrowserSyncCleanup } from './lib/auth/browserSyncCleanup';
 
 installBrowserSyncCleanup();
@@ -13,33 +10,14 @@ interface MessageResponse {
   pageContext?: PageContext | null;
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'paste-code') {
     respond(sendResponse, pasteCodeIntoActivePage(message.code));
     return true;
   }
 
-  if (message?.type === 'start-page-scan') {
-    respond(sendResponse, startPageScan());
-    return true;
-  }
-
   if (message?.type === 'get-active-page-context') {
     respond(sendResponse, getActivePageContext(readWindowId(message.windowId)));
-    return true;
-  }
-
-  if (message?.type === 'page-scan:capture') {
-    respond(
-      sendResponse,
-      captureSelection(sender.tab?.windowId, sender.tab?.id, message.rect),
-      sender.tab?.id
-    );
-    return true;
-  }
-
-  if (message?.type === 'page-scan:failed') {
-    respond(sendResponse, reportScanFailure(sender.tab?.id, message.message));
     return true;
   }
 
@@ -89,20 +67,6 @@ function notifyActivePageChanged(windowId: number, clearCurrent: boolean): void 
   sendRuntimeMessage({ type: 'active-page-context-changed', windowId, clearCurrent });
 }
 
-async function startPageScan(): Promise<void> {
-  const tab = await getActiveTab();
-  if (!tab?.id) {
-    throw new Error('No active tab is available to scan.');
-  }
-
-  if (isRestrictedPage(tab.url)) {
-    throw new Error('Page scan is unavailable on internal or extension pages.');
-  }
-
-  await executeScript(tab.id, 'assets/pageScanner.js');
-  await sendTabMessage(tab.id, { type: 'page-scan:start' });
-}
-
 async function pasteCodeIntoActivePage(code: unknown): Promise<Partial<MessageResponse>> {
   if (typeof code !== 'string' || code.length === 0 || code.length > 32) {
     throw new Error('Auto-paste code is invalid.');
@@ -126,57 +90,21 @@ async function pasteCodeIntoActivePage(code: unknown): Promise<Partial<MessageRe
   return { pasted: Boolean(response.pasted) };
 }
 
-async function captureSelection(
-  windowId: number | undefined,
-  tabId: number | undefined,
-  rect: unknown
-): Promise<void> {
-  if (tabId === undefined || !isPageScanCaptureRect(rect)) {
-    throw new Error('No scan area was selected.');
-  }
-
-  const dataUrl = await captureVisibleTab(windowId);
-  await completePageScan(tabId, dataUrl, rect);
-}
-
 function respond(
   sendResponse: (response: MessageResponse) => void,
-  action: Promise<Partial<MessageResponse> | void>,
-  failureTabId?: number
+  action: Promise<Partial<MessageResponse> | void>
 ): void {
   action
     .then((payload) => {
       const data = payload && typeof payload === 'object' ? payload : {};
       sendResponse({ ok: true, ...data });
     })
-    .catch(async (error) => {
-      const message = error instanceof Error ? error.message : 'Page scan failed.';
-      if (failureTabId !== undefined) {
-        await alertPageScanResult(failureTabId, message);
-        sendRuntimeMessage({ type: 'page-scan:completed', ok: false, message });
-      }
-      sendResponse({ ok: false, error: message });
+    .catch((error) => {
+      sendResponse({
+        ok: false,
+        error: error instanceof Error ? error.message : 'Request failed.'
+      });
     });
-}
-
-async function completePageScan(
-  tabId: number,
-  dataUrl: string,
-  rect: PageScanCaptureRect
-): Promise<void> {
-  const text = await decodeQrDataUrlInWorker(dataUrl, rect);
-  const result = await importTextIntoStoredVault(text);
-  const message = getImportResultMessage(result);
-  await alertPageScanResult(tabId, message);
-  sendRuntimeMessage({ type: 'page-scan:completed', ok: result.imported > 0, message });
-}
-
-async function reportScanFailure(tabId: number | undefined, message: unknown): Promise<void> {
-  const resultMessage = typeof message === 'string' && message ? message : 'Page scan failed.';
-  if (tabId !== undefined) {
-    await alertPageScanResult(tabId, resultMessage);
-  }
-  sendRuntimeMessage({ type: 'page-scan:completed', ok: false, message: resultMessage });
 }
 
 function getActiveTab(windowId?: number): Promise<chrome.tabs.Tab | undefined> {
@@ -204,17 +132,6 @@ function executeScript(tabId: number, file: string): Promise<void> {
   });
 }
 
-function captureVisibleTab(windowId: number | undefined): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const callback = (dataUrl: string) => settleChromeCallback(() => resolve(dataUrl), reject);
-    if (windowId === undefined) {
-      chrome.tabs.captureVisibleTab({ format: 'png' }, callback);
-    } else {
-      chrome.tabs.captureVisibleTab(windowId, { format: 'png' }, callback);
-    }
-  });
-}
-
 function sendTabMessage<T = unknown>(tabId: number, message: unknown): Promise<T> {
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(tabId, message, { frameId: 0 }, (response: T) => {
@@ -225,27 +142,6 @@ function sendTabMessage<T = unknown>(tabId: number, message: unknown): Promise<T
         resolve(response);
       }
     });
-  });
-}
-
-async function alertPageScanResult(tabId: number, message: string): Promise<void> {
-  try {
-    await sendTabMessage(tabId, { type: 'page-scan:result', message });
-  } catch {
-    await executeAlert(tabId, message);
-  }
-}
-
-function executeAlert(tabId: number, message: string): Promise<void> {
-  return new Promise((resolve) => {
-    chrome.scripting.executeScript(
-      {
-        target: { tabId },
-        func: (text: string) => window.alert(text),
-        args: [message]
-      },
-      () => resolve()
-    );
   });
 }
 

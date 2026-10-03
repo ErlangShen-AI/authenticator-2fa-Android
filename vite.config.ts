@@ -6,7 +6,6 @@ import { normalizePath, type Plugin } from 'vite'
 
 const contentScriptEntries = {
   codePaster: resolve(import.meta.dirname, 'src/content/codePaster.ts'),
-  pageScanner: resolve(import.meta.dirname, 'src/content/pageScanner.ts'),
 }
 const wrappedContentScriptEntryIds = new Set(Object.values(contentScriptEntries).map(normalizePath))
 

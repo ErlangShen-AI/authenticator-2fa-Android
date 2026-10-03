@@ -21,7 +21,7 @@ See [Releases](#releases) for where the built zips are published.
 ## Features
 
 - Generate TOTP, HOTP, and Steam-style 2FA codes.
-- Add accounts from QR images, page QR scans, pasted otpauth text, or manual entry.
+- Add accounts from QR images, pasted otpauth text, or manual entry.
 - Search, copy, manually reorder accounts, or focus on likely codes for the current site with one-click access to the rest.
 - Import by dropping or picking QR images, otpauth text, JSON, or password-protected backups; export the same way.
 - Optional local vault password protection.
@@ -51,7 +51,6 @@ This repository targets extension-capable Android browsers (for example Firefox 
 
 Known mobile limitations:
 
-- "Select QR on page" needs `tabs.captureVisibleTab`; where a mobile browser does not expose it, use QR image import instead.
 - Browser Sync and code auto-paste depend on the level of WebExtension support in each browser.
 
 ## Development

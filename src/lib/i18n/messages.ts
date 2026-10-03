@@ -110,10 +110,6 @@ export const MESSAGE_KEYS = [
   'system',
   'light',
   'dark',
-  'scanPage',
-  'scanPageStart',
-  'scanPageFailed',
-  'scanPageUnavailable',
   'browserSync',
   'syncDelete',
   'syncDeleteHint',
@@ -231,7 +227,7 @@ const en: Record<MessageKey, string> = {
   addAccount: 'Add account',
   addManual: 'Manual',
   addQr: 'QR code',
-  addQrDescription: 'Upload a QR image or select a QR code on the current page.',
+  addQrDescription: 'Upload a file.',
   addPaste: 'Paste',
   addPasteDescription: 'Paste an otpauth link, transfer text, or another supported authenticator export.',
   editAccount: 'Edit account',
@@ -328,10 +324,6 @@ const en: Record<MessageKey, string> = {
   system: 'System',
   light: 'Light',
   dark: 'Dark',
-  scanPage: 'Scan page',
-  scanPageStart: 'Select QR on page',
-  scanPageFailed: 'Page scan failed. Try a tighter selection or use QR image import.',
-  scanPageUnavailable: 'Page scan is unavailable here.'
 };
 
 const dictionaries: Record<string, Record<MessageKey, string>> = {
@@ -400,7 +392,7 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     addAccount: 'Agregar cuenta',
     addManual: 'Manual',
     addQr: 'Código QR',
-    addQrDescription: 'Sube una imagen QR o selecciona un código QR en la página actual.',
+    addQrDescription: 'Sube un archivo.',
     addPaste: 'Pegar',
     addPasteDescription: 'Pega un enlace otpauth, texto de transferencia o una exportación compatible.',
     editAccount: 'Editar cuenta',
@@ -498,10 +490,6 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     system: 'Sistema',
     light: 'Claro',
     dark: 'Oscuro',
-    scanPage: 'Escanear página',
-    scanPageStart: 'Seleccionar QR en la página',
-    scanPageFailed: 'El escaneo de la página falló. Prueba una selección más precisa o importa una imagen QR.',
-    scanPageUnavailable: 'El escaneo de páginas no está disponible aquí.'
   },
   hi: {
     browserSync: 'ब्राउज़र सिंक',
@@ -567,7 +555,7 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     addAccount: 'खाता जोड़ें',
     addManual: 'मैनुअल',
     addQr: 'QR कोड',
-    addQrDescription: 'QR इमेज अपलोड करें या मौजूदा पेज पर QR कोड चुनें।',
+    addQrDescription: 'फ़ाइल अपलोड करें।',
     addPaste: 'पेस्ट',
     addPasteDescription: 'otpauth लिंक, ट्रांसफर टेक्स्ट या समर्थित authenticator export पेस्ट करें।',
     editAccount: 'खाता संपादित करें',
@@ -664,10 +652,6 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     system: 'सिस्टम',
     light: 'लाइट',
     dark: 'डार्क',
-    scanPage: 'पेज स्कैन करें',
-    scanPageStart: 'पेज पर QR चुनें',
-    scanPageFailed: 'पेज स्कैन विफल रहा। छोटा चयन आज़माएं या QR इमेज आयात करें।',
-    scanPageUnavailable: 'पेज स्कैन यहां उपलब्ध नहीं है।'
   },
   ar: {
     browserSync: 'مزامنة المتصفح',
@@ -733,7 +717,7 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     addAccount: 'إضافة حساب',
     addManual: 'يدوي',
     addQr: 'رمز QR',
-    addQrDescription: 'ارفع صورة QR أو حدد رمز QR في الصفحة الحالية.',
+    addQrDescription: 'ارفع ملفًا.',
     addPaste: 'لصق',
     addPasteDescription: 'الصق رابط otpauth أو نص نقل أو تصدير مصادقة مدعوم.',
     editAccount: 'تعديل الحساب',
@@ -830,10 +814,6 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     system: 'النظام',
     light: 'فاتح',
     dark: 'داكن',
-    scanPage: 'مسح الصفحة',
-    scanPageStart: 'تحديد QR في الصفحة',
-    scanPageFailed: 'فشل مسح الصفحة. جرّب تحديدا أدق أو استورد صورة QR.',
-    scanPageUnavailable: 'مسح الصفحة غير متاح هنا.'
   },
   bn: {
     browserSync: 'ব্রাউজার সিঙ্ক',
@@ -899,7 +879,7 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     addAccount: 'অ্যাকাউন্ট যোগ করুন',
     addManual: 'ম্যানুয়াল',
     addQr: 'QR কোড',
-    addQrDescription: 'QR ছবি আপলোড করুন বা বর্তমান পেজে QR কোড নির্বাচন করুন।',
+    addQrDescription: 'একটি ফাইল আপলোড করুন।',
     addPaste: 'পেস্ট',
     addPasteDescription: 'otpauth লিংক, ট্রান্সফার টেক্সট বা সমর্থিত authenticator export পেস্ট করুন।',
     editAccount: 'অ্যাকাউন্ট সম্পাদনা',
@@ -996,10 +976,6 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     system: 'সিস্টেম',
     light: 'লাইট',
     dark: 'ডার্ক',
-    scanPage: 'পেজ স্ক্যান',
-    scanPageStart: 'পেজে QR নির্বাচন করুন',
-    scanPageFailed: 'পেজ স্ক্যান ব্যর্থ হয়েছে। আরও ছোট নির্বাচন চেষ্টা করুন বা QR ছবি ইমপোর্ট করুন।',
-    scanPageUnavailable: 'পেজ স্ক্যান এখানে উপলব্ধ নয়।'
   },
   pt: {
     browserSync: 'Sincronização do navegador',
@@ -1065,7 +1041,7 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     addAccount: 'Adicionar conta',
     addManual: 'Manual',
     addQr: 'Código QR',
-    addQrDescription: 'Envie uma imagem QR ou selecione um código QR na página atual.',
+    addQrDescription: 'Envie um arquivo.',
     addPaste: 'Colar',
     addPasteDescription: 'Cole um link otpauth, texto de transferência ou exportação compatível.',
     editAccount: 'Editar conta',
@@ -1163,10 +1139,6 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     system: 'Sistema',
     light: 'Claro',
     dark: 'Escuro',
-    scanPage: 'Escanear página',
-    scanPageStart: 'Selecionar QR na página',
-    scanPageFailed: 'Falha ao escanear a página. Tente uma seleção mais precisa ou importe uma imagem QR.',
-    scanPageUnavailable: 'O escaneamento de página não está disponível aqui.'
   },
   ru: {
     browserSync: 'Синхронизация браузера',
@@ -1232,7 +1204,7 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     addAccount: 'Добавить аккаунт',
     addManual: 'Вручную',
     addQr: 'QR-код',
-    addQrDescription: 'Загрузите QR-изображение или выберите QR-код на текущей странице.',
+    addQrDescription: 'Загрузите файл.',
     addPaste: 'Вставить',
     addPasteDescription: 'Вставьте ссылку otpauth, текст переноса или поддерживаемый экспорт.',
     editAccount: 'Изменить аккаунт',
@@ -1330,10 +1302,6 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     system: 'Системная',
     light: 'Светлая',
     dark: 'Темная',
-    scanPage: 'Сканировать страницу',
-    scanPageStart: 'Выбрать QR на странице',
-    scanPageFailed: 'Не удалось сканировать страницу. Выберите область точнее или импортируйте QR-изображение.',
-    scanPageUnavailable: 'Сканирование страницы здесь недоступно.'
   },
   ja: {
     browserSync: 'ブラウザー同期',
@@ -1399,7 +1367,7 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     addAccount: 'アカウント追加',
     addManual: '手動',
     addQr: 'QRコード',
-    addQrDescription: 'QR画像をアップロードするか、現在のページでQRコードを選択します。',
+    addQrDescription: 'ファイルをアップロード',
     addPaste: '貼り付け',
     addPasteDescription: 'otpauthリンク、転送テキスト、または対応するエクスポートを貼り付けます。',
     editAccount: 'アカウントを編集',
@@ -1495,10 +1463,6 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     system: 'システム',
     light: 'ライト',
     dark: 'ダーク',
-    scanPage: 'ページをスキャン',
-    scanPageStart: 'ページ上のQRを選択',
-    scanPageFailed: 'ページスキャンに失敗しました。範囲を絞るか、QR画像をインポートしてください。',
-    scanPageUnavailable: 'ページスキャンはここでは利用できません。'
   },
   fr: {
     browserSync: 'Synchronisation du navigateur',
@@ -1564,7 +1528,7 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     addAccount: 'Ajouter un compte',
     addManual: 'Manuel',
     addQr: 'Code QR',
-    addQrDescription: 'Importez une image QR ou sélectionnez un code QR sur la page actuelle.',
+    addQrDescription: 'Importez un fichier.',
     addPaste: 'Coller',
     addPasteDescription: 'Collez un lien otpauth, un texte de transfert ou une exportation compatible.',
     editAccount: 'Modifier le compte',
@@ -1662,10 +1626,6 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     system: 'Système',
     light: 'Clair',
     dark: 'Sombre',
-    scanPage: 'Scanner la page',
-    scanPageStart: 'Sélectionner le QR sur la page',
-    scanPageFailed: 'Le scan de la page a échoué. Essayez une sélection plus précise ou importez une image QR.',
-    scanPageUnavailable: 'Le scan de page n’est pas disponible ici.'
   },
   de: {
     browserSync: 'Browser-Synchronisierung',
@@ -1731,7 +1691,7 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     addAccount: 'Konto hinzufügen',
     addManual: 'Manuell',
     addQr: 'QR-Code',
-    addQrDescription: 'Lade ein QR-Bild hoch oder wähle einen QR-Code auf der aktuellen Seite aus.',
+    addQrDescription: 'Lade eine Datei hoch.',
     addPaste: 'Einfügen',
     addPasteDescription: 'Füge einen otpauth-Link, Übertragungstext oder einen unterstützten Export ein.',
     editAccount: 'Konto bearbeiten',
@@ -1829,10 +1789,6 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     system: 'System',
     light: 'Hell',
     dark: 'Dunkel',
-    scanPage: 'Seite scannen',
-    scanPageStart: 'QR auf Seite auswählen',
-    scanPageFailed: 'Seitenscan fehlgeschlagen. Wähle enger aus oder importiere ein QR-Bild.',
-    scanPageUnavailable: 'Seitenscan ist hier nicht verfügbar.'
   },
   zh: {
     browserSync: '浏览器同步',
@@ -1898,7 +1854,7 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     addAccount: '添加账户',
     addManual: '手动',
     addQr: 'QR 码',
-    addQrDescription: '上传 QR 图片，或在当前页面选择 QR 码。',
+    addQrDescription: '上传文件。',
     addPaste: '粘贴',
     addPasteDescription: '粘贴 otpauth 链接、迁移文本或其他受支持的导出内容。',
     editAccount: '编辑账户',
@@ -1992,10 +1948,6 @@ const dictionaries: Record<string, Record<MessageKey, string>> = {
     system: '跟随系统',
     light: '浅色',
     dark: '深色',
-    scanPage: '扫描页面',
-    scanPageStart: '在页面上选择 QR',
-    scanPageFailed: '页面扫描失败。请缩小选择范围，或导入 QR 图片。',
-    scanPageUnavailable: '此处无法扫描页面。'
   }
 };
 
