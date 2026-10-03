@@ -21,7 +21,7 @@ function createManifest(target) {
     version: packageJson.version,
     description: '__MSG_extensionDescription__',
     default_locale: 'en',
-    homepage_url: 'https://github.com/VastBlast/authenticator-2fa',
+    homepage_url: 'https://github.com/ErlangShen-AI/authenticator-2fa-Android',
     icons: {
       16: 'icons/icon16.png',
       32: 'icons/icon32.png',

@@ -1,18 +1,22 @@
 # Authenticator - 2FA
 
-Browser extension for generating and managing two-factor authentication codes.
+Browser extension for generating and managing two-factor authentication codes, adapted for extension-capable Android browsers.
+
+This repository is the Android adaptation of [VastBlast/authenticator-2fa](https://github.com/VastBlast/authenticator-2fa): a responsive layout for small screens, touch-friendly interaction fixes, and a `firefox` build that declares Android support. See [Android adaptation](#android-adaptation).
 
 **Privacy:** Authenticator - 2FA does not track users or collect analytics. Accounts stay on your device by default. If you enable Browser Sync, encrypted account data is sent through your browser provider's sync service. Account names and secrets are encrypted before upload; the recovery key stays inside your password-protected local vault.
 
 ![Authenticator - 2FA promo](assets/store/promotional/marquee-promo-tile.png)
 
-This repository is the Android adaptation of [VastBlast/authenticator-2fa](https://github.com/VastBlast/authenticator-2fa), with a responsive layout for small screens and touch-friendly interaction fixes. See [Android adaptation](#android-adaptation).
-
 ## Install
 
-[![Install from Chrome Web Store](https://img.shields.io/badge/Install%20from-Chrome%20Web%20Store-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/authenticator-2fa/pphhggggadbehnhklioamemafkeegfjf)
-[![Install from Microsoft Edge Add-ons](https://img.shields.io/badge/Install%20from-Microsoft%20Edge%20Add--ons-0078D7?style=for-the-badge&logo=microsoftedge&logoColor=white)](https://microsoftedge.microsoft.com/addons/detail/lngkiejjggjenmeelgcadhilloeffkdl)
-[![Install from Firefox Add-ons](https://img.shields.io/badge/Install%20from-Firefox%20Add--ons-FF7139?style=for-the-badge&logo=firefoxbrowser&logoColor=white)](https://addons.mozilla.org/en-US/firefox/addon/authenticator-2fa/)
+Builds from this repository target `chrome`, `edge`, and `firefox`:
+
+- **Firefox for Android** — requires a signed build: submit the `firefox` zip to [AMO](https://addons.mozilla.org/) (listed or unlisted), or load it on a development device with `web-ext`.
+- **Chromium-based Android browsers with extension support** — use the `chrome` or `edge` zip.
+- **Desktop browsers** — the same zips run as unpacked builds; signed store builds are available from the upstream project.
+
+See [Releases](#releases) for where the built zips are published.
 
 ## Features
 
@@ -47,8 +51,6 @@ Known mobile limitations:
 - "Select QR on page" needs `tabs.captureVisibleTab`; where a mobile browser does not expose it, use QR image import instead.
 - Browser Sync and code auto-paste depend on the level of WebExtension support in each browser.
 
-Installation on Firefox for Android requires a signed build: submit the `firefox` zip to AMO (listed or unlisted), or load it on a development device with `web-ext`.
-
 ## Development
 
 ```sh
@@ -65,7 +67,7 @@ npm run build
 npm run package
 ```
 
-`npm run package` builds extension zips for `chrome`, `edge`, and `firefox` into `artifacts/`.
+`npm run package` builds extension zips for `chrome`, `edge`, and `firefox` into `artifacts/`. Pushes to `main` run the same checks and packaging in GitHub Actions.
 
 ## Store Assets
 
@@ -86,12 +88,14 @@ Temporary store listing text drafts can live in `.tmp/store-listing/`, which is 
 
 ## Releases
 
-Pushing a tag like `v1.2.3` runs the release workflow. The workflow applies the tag version, builds all targets, packages the zips, creates the GitHub release, and uploads the browser extension assets.
+Pushing a tag like `v1.2.3` runs the release workflow: it applies the tag version, builds all targets, packages the zips, creates the GitHub release, and attaches the extension zips. Pushes to `main` run the Build workflow, which runs checks and tests and uploads the same zips as a build artifact.
 
 ## Origins
 
-Authenticator - 2FA was inspired by the open-source [Authenticator browser extension](https://github.com/Authenticator-Extension/Authenticator). This project is a complete from-scratch rewrite, created after that extension became unmaintained, with a new codebase focused on fixing many long-standing issues while preserving a simple local-first authenticator workflow.
+Authenticator - 2FA was inspired by the open-source [Authenticator browser extension](https://github.com/Authenticator-Extension/Authenticator). After that extension became unmaintained, it was rebuilt from scratch as [VastBlast/authenticator-2fa](https://github.com/VastBlast/authenticator-2fa), keeping a simple local-first authenticator workflow.
+
+This repository adapts that project for extension-capable Android browsers.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). The upstream copyright notice is retained.
