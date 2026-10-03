@@ -6,6 +6,8 @@ Browser extension for generating and managing two-factor authentication codes.
 
 ![Authenticator - 2FA promo](assets/store/promotional/marquee-promo-tile.png)
 
+This repository is the Android adaptation of [VastBlast/authenticator-2fa](https://github.com/VastBlast/authenticator-2fa), with a responsive layout for small screens and touch-friendly interaction fixes. See [Android adaptation](#android-adaptation).
+
 ## Install
 
 [![Install from Chrome Web Store](https://img.shields.io/badge/Install%20from-Chrome%20Web%20Store-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/authenticator-2fa/pphhggggadbehnhklioamemafkeegfjf)
@@ -31,6 +33,21 @@ Open **Settings → Browser Sync**, set a local vault password, choose **Set up 
 Sync works within one browser provider. Accounts, edits, and deletions sync while the extension is open and unlocked; preferences and ordering stay local. Keep independent backups and use HOTP accounts on one device at a time.
 
 See [sync security, recovery, and limits](docs/browser-sync.md).
+
+## Android adaptation
+
+This repository targets extension-capable Android browsers (for example Firefox for Android).
+
+- The extension surface follows the viewport on touch devices: screens narrower than 400px or shorter than 532px get a fully fitted layout instead of the desktop minimum. Desktop windows keep the original 400x532 minimum.
+- The default tap highlight is disabled, so taps and long presses on controls leave no highlight overlay.
+- The `firefox` build declares `browser_specific_settings.gecko_android`, so the add-on can be submitted to AMO for Android.
+
+Known mobile limitations:
+
+- "Select QR on page" needs `tabs.captureVisibleTab`; where a mobile browser does not expose it, use QR image import instead.
+- Browser Sync and code auto-paste depend on the level of WebExtension support in each browser.
+
+Installation on Firefox for Android requires a signed build: submit the `firefox` zip to AMO (listed or unlisted), or load it on a development device with `web-ext`.
 
 ## Development
 
